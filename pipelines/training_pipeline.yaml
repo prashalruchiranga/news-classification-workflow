@@ -1,0 +1,81 @@
+# PIPELINE DEFINITION
+# Name: news-clf-model-trainer
+# Description: Pipeline to fine-tune a pretrained BERT model for news classification
+# Inputs:
+#    dataset_name: str
+components:
+  comp-load-hf-dataset:
+    executorLabel: exec-load-hf-dataset
+    inputDefinitions:
+      parameters:
+        name:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        preview:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-load-hf-dataset:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - load_hf_dataset
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'datasets>=4.0.0'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef load_hf_dataset(name: str, output: Output[Dataset], preview:\
+          \ Output[Dataset]):\n    \"Load a dataset from the Hugging Face Hub and\
+          \ save it as a DatasetDict artifact\"\n    from datasets import load_dataset\n\
+          \    dataset = load_dataset(name)\n    dataset.save_to_disk(output.path)\n\
+          \    #For preview only\n    df = dataset[\"train\"].to_pandas().head(20)\n\
+          \    df.to_csv(preview.path, index=False)\n\n"
+        image: python:3.11-slim
+pipelineInfo:
+  description: Pipeline to fine-tune a pretrained BERT model for news classification
+  name: news-clf-model-trainer
+root:
+  dag:
+    tasks:
+      load-hf-dataset:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-load-hf-dataset
+        inputs:
+          parameters:
+            name:
+              componentInputParameter: dataset_name
+        taskInfo:
+          name: load-hf-dataset
+  inputDefinitions:
+    parameters:
+      dataset_name:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.13.0
