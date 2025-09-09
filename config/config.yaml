@@ -1,0 +1,3 @@
+kfp_endpoint: "http://localhost:8080"
+dataset: "sh0416/ag_news"
+experiment: "news-classification"
