@@ -2,26 +2,88 @@
 # Name: news-clf-model-trainer
 # Description: Pipeline to fine-tune a pretrained BERT model for news classification
 # Inputs:
+#    bert_preset: str [Default: 'bert_tiny_en_uncased']
 #    dataset_name: str
+#    dataset_split_seed: int [Default: 42.0]
+#    val_data_fraction: int [Default: 0.2]
 components:
+  comp-finetune-bert:
+    executorLabel: exec-finetune-bert
+    inputDefinitions:
+      artifacts:
+        train_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        val_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        preset:
+          parameterType: STRING
   comp-load-hf-dataset:
     executorLabel: exec-load-hf-dataset
     inputDefinitions:
       parameters:
         name:
           parameterType: STRING
+        seed:
+          parameterType: NUMBER_INTEGER
+        val_fraction:
+          parameterType: NUMBER_INTEGER
     outputDefinitions:
       artifacts:
-        output:
+        preview:
           artifactType:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
-        preview:
+        test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        val_dataset:
           artifactType:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
 deploymentSpec:
   executors:
+    exec-finetune-bert:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - finetune_bert
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'datasets>=4.0.0'\
+          \ && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef finetune_bert(preset: str, train_dataset: Input[Dataset], val_dataset:\
+          \ Input[Dataset]):\n    from datasets import load_from_disk\n    train_split\
+          \ = load_from_disk(train_dataset.path)\n    val_split = load_from_disk(val_dataset.path)\n\
+          \    print(f\"Number of rows: {train_split.num_rows}\")\n\n"
+        image: python:3.11-slim
     exec-load-hf-dataset:
       container:
         args:
@@ -49,12 +111,21 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef load_hf_dataset(name: str, output: Output[Dataset], preview:\
-          \ Output[Dataset]):\n    \"Load a dataset from the Hugging Face Hub and\
-          \ save it as a DatasetDict artifact\"\n    from datasets import load_dataset\n\
-          \    dataset = load_dataset(name)\n    dataset.save_to_disk(output.path)\n\
-          \    #For preview only\n    df = dataset[\"train\"].to_pandas().head(20)\n\
-          \    df.to_csv(preview.path, index=False)\n\n"
+          \ *\n\ndef load_hf_dataset(\n    name: str,\n    # Fraction of the training\
+          \ dataset to use as the validation split. The validation set is taken from\
+          \ the training set, not from the entire dataset\n    val_fraction: int,\n\
+          \    seed: int,\n    train_dataset: Output[Dataset],\n    val_dataset: Output[Dataset],\n\
+          \    test_dataset: Output[Dataset],\n    preview: Output[Dataset]\n    ):\n\
+          \    \"Load a dataset from the Hugging Face Hub and save it as a DatasetDict\
+          \ artifact\"\n    from datasets import load_dataset\n    dataset = load_dataset(name)\n\
+          \n    # Split train dataset into train split and val split\n    split_dataset\
+          \ = dataset[\"train\"].train_test_split(test_size=val_fraction, shuffle=True,\
+          \ seed=seed)\n    train_split = split_dataset[\"train\"]\n    val_split\
+          \ = split_dataset[\"test\"]\n    # Just take test dataset as test split\n\
+          \    test_split = dataset[\"test\"]\n\n    train_split.save_to_disk(train_dataset.path)\n\
+          \    val_split.save_to_disk(val_dataset.path)\n    test_split.save_to_disk(test_dataset.path)\n\
+          \n    # For preview only\n    df = train_split.to_pandas().head(20)\n  \
+          \  df.to_csv(preview.path, index=False)\n\n"
         image: python:3.11-slim
 pipelineInfo:
   description: Pipeline to fine-tune a pretrained BERT model for news classification
@@ -62,6 +133,28 @@ pipelineInfo:
 root:
   dag:
     tasks:
+      finetune-bert:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-finetune-bert
+        dependentTasks:
+        - load-hf-dataset
+        inputs:
+          artifacts:
+            train_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: train_dataset
+                producerTask: load-hf-dataset
+            val_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: val_dataset
+                producerTask: load-hf-dataset
+          parameters:
+            preset:
+              componentInputParameter: bert_preset
+        taskInfo:
+          name: finetune-bert
       load-hf-dataset:
         cachingOptions:
           enableCache: true
@@ -71,11 +164,27 @@ root:
           parameters:
             name:
               componentInputParameter: dataset_name
+            seed:
+              componentInputParameter: dataset_split_seed
+            val_fraction:
+              componentInputParameter: val_data_fraction
         taskInfo:
           name: load-hf-dataset
   inputDefinitions:
     parameters:
+      bert_preset:
+        defaultValue: bert_tiny_en_uncased
+        isOptional: true
+        parameterType: STRING
       dataset_name:
         parameterType: STRING
+      dataset_split_seed:
+        defaultValue: 42.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      val_data_fraction:
+        defaultValue: 0.2
+        isOptional: true
+        parameterType: NUMBER_INTEGER
 schemaVersion: 2.1.0
 sdkVersion: kfp-2.13.0

@@ -1,12 +1,26 @@
 from kfp.dsl import pipeline
-from components import data_loader
+from components import data_loader, trainer
 
 @pipeline(
     name="news-clf-model-trainer",
     description= "Pipeline to fine-tune a pretrained BERT model for news classification"
 )
-def training_pipeline(dataset_name: str) -> None:
-    load_dataset_op = data_loader.load_hf_dataset(name=dataset_name)
+def training_pipeline(
+    dataset_name: str,
+    val_data_fraction: int = 0.2,
+    dataset_split_seed: int = 42,
+    bert_preset: str = "bert_tiny_en_uncased"
+    ):
+    load_dataset_op = data_loader.load_hf_dataset(
+        name=dataset_name, 
+        val_fraction=val_data_fraction,
+        seed=dataset_split_seed
+    )
+    finetune_bert_op = trainer.finetune_bert(
+        preset=bert_preset,
+        train_dataset=load_dataset_op.outputs["train_dataset"],
+        val_dataset=load_dataset_op.outputs["val_dataset"]
+    )
 
 
 if __name__ == "__main__":
