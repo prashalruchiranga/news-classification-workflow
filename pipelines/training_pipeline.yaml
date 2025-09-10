@@ -15,6 +15,31 @@
 #    text_column_name: str
 #    val_data_fraction: int [Default: 0.2]
 components:
+  comp-evaluate-model:
+    executorLabel: exec-evaluate-model
+    inputDefinitions:
+      artifacts:
+        saved_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        batch_size:
+          parameterType: NUMBER_INTEGER
+        label_col:
+          parameterType: STRING
+        text_col:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
   comp-finetune-bert:
     executorLabel: exec-finetune-bert
     inputDefinitions:
@@ -48,6 +73,10 @@ components:
           parameterType: STRING
     outputDefinitions:
       artifacts:
+        learning_curves:
+          artifactType:
+            schemaTitle: system.Markdown
+            schemaVersion: 0.0.1
         saved_model:
           artifactType:
             schemaTitle: system.Model
@@ -82,6 +111,47 @@ components:
             schemaVersion: 0.0.1
 deploymentSpec:
   executors:
+    exec-evaluate-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'datasets>=4.0.0'\
+          \ 'tensorflow==2.18.0' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_model(\n    batch_size: int,\n    text_col: str,\n \
+          \   label_col: str,\n    test_dataset: Input[Dataset],\n    saved_model:\
+          \ Input[Model],\n    metrics: Output[Metrics]\n):\n    from datasets import\
+          \ load_from_disk\n    import tensorflow as tf\n\n    # shift [1,2,3,4] ->\
+          \ [0,1,2,3]\n    def adjust_labels(x, y):\n        return x, y - 1\n\n \
+          \   test_split = load_from_disk(test_dataset.path)\n    tf_test_dataset\
+          \ = test_split.to_tf_dataset(\n        columns=[text_col],\n        label_cols=[label_col],\n\
+          \        batch_size=batch_size,\n        shuffle=True\n    )\n    tf_test_dataset\
+          \ = tf_test_dataset.map(adjust_labels)\n\n    model_filepath = f\"{saved_model.path}/model.keras\"\
+          \n    reloaded_model = tf.keras.models.load_model(model_filepath)\n    loss,\
+          \ accuracy = reloaded_model.evaluate(tf_test_dataset)\n    metrics.log_metric(\"\
+          loss\", float(loss))\n    metrics.log_metric(\"sparse_categorical_accuracy\"\
+          , float(accuracy))\n\n"
+        image: python:3.11-slim
     exec-finetune-bert:
       container:
         args:
@@ -97,7 +167,8 @@ deploymentSpec:
           \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
           \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
           \  python3 -m pip install --quiet --no-warn-script-location 'datasets>=4.0.0'\
-          \ 'tensorflow==2.18.0' 'keras-hub>=0.22.1' && \"$0\" \"$@\"\n"
+          \ 'tensorflow==2.18.0' 'keras-hub>=0.22.1' 'matplotlib>=3.10.6' && \"$0\"\
+          \ \"$@\"\n"
         - sh
         - -ec
         - 'program_path=$(mktemp -d)
@@ -112,14 +183,15 @@ deploymentSpec:
           \ *\n\ndef finetune_bert(\n    preset: str,\n    batch_size: int,\n    text_col:\
           \ str,\n    label_col: str,\n    lr: float,\n    epochs: int,\n    min_delta:\
           \ float,\n    patience: int,\n    debug_batch_count: int,\n    train_dataset:\
-          \ Input[Dataset],\n    val_dataset: Input[Dataset],\n    saved_model: Output[Model]\n\
-          \    ):\n    import os\n    import json\n    from datasets import load_from_disk\n\
-          \    from keras_hub.models import BertTextClassifier\n    from tensorflow.keras.losses\
-          \ import SparseCategoricalCrossentropy\n    from tensorflow.keras.metrics\
-          \ import SparseCategoricalAccuracy\n    from tensorflow.keras.optimizers\
-          \ import Adam\n    from tensorflow.keras.callbacks import EarlyStopping\n\
-          \n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x, y):\n   \
-          \     return x, y - 1\n\n    train_split = load_from_disk(train_dataset.path)\n\
+          \ Input[Dataset],\n    val_dataset: Input[Dataset],\n    learning_curves:\
+          \ Output[Markdown],\n    saved_model: Output[Model]\n    ):\n    import\
+          \ os\n    import json\n    import matplotlib.pyplot as plt\n    from datasets\
+          \ import load_from_disk\n    from keras_hub.models import BertTextClassifier\n\
+          \    from tensorflow.keras.losses import SparseCategoricalCrossentropy\n\
+          \    from tensorflow.keras.metrics import SparseCategoricalAccuracy\n  \
+          \  from tensorflow.keras.optimizers import Adam\n    from tensorflow.keras.callbacks\
+          \ import EarlyStopping\n\n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x,\
+          \ y):\n        return x, y - 1\n\n    train_split = load_from_disk(train_dataset.path)\n\
           \    val_split = load_from_disk(val_dataset.path)\n    tf_train_dataset\
           \ = train_split.to_tf_dataset(\n        columns=[text_col],\n        label_cols=[label_col],\n\
           \        batch_size=batch_size,\n        shuffle=True\n    )\n    tf_val_dataset\
@@ -138,9 +210,25 @@ deploymentSpec:
           \        verbose=True,\n        restore_best_weights=True,\n    )\n    history\
           \ = classifier.fit(\n        x=tf_train_dataset,\n        epochs=epochs,\n\
           \        validation_data=tf_val_dataset,\n        callbacks=[early_stopping]\n\
-          \    )\n\n    # Save fine-tuned model\n    os.makedirs(saved_model.path,\
-          \ exist_ok=True)\n    model_filepath = os.path.join(saved_model.path, \"\
-          news_clf_model.keras\")\n    classifier.save(model_filepath)\n\n"
+          \    )\n\n    # Save training curves as an artifact\n    history_dict =\
+          \ history.history\n    acc = history_dict[\"sparse_categorical_accuracy\"\
+          ]\n    val_acc = history_dict[\"val_sparse_categorical_accuracy\"]\n   \
+          \ loss = history_dict['loss']\n    val_loss = history_dict['val_loss']\n\
+          \n    epochs = range(1, len(acc) + 1)\n    fig = plt.figure(figsize=(10,\
+          \ 10))\n    fig.tight_layout()\n\n    plt.subplot(2, 1, 1)\n    plt.plot(epochs,\
+          \ loss, 'r', label='Training loss')\n    plt.plot(epochs, val_loss, 'b',\
+          \ label='Validation loss')\n    plt.title('Training and validation loss')\n\
+          \    plt.xlabel('Epochs')\n    plt.ylabel('Loss')\n    plt.legend()\n\n\
+          \    plt.subplot(2, 1, 2)\n    plt.plot(epochs, acc, 'r', label='Training\
+          \ acc')\n    plt.plot(epochs, val_acc, 'b', label='Validation acc')\n  \
+          \  plt.title('Training and validation accuracy')\n    plt.xlabel('Epochs')\n\
+          \    plt.ylabel('Accuracy')\n    plt.legend(loc='lower right')\n\n    local_png_path\
+          \ = \"learning_curves.png\"\n    plt.savefig(local_png_path, format=\"png\"\
+          )\n    plt.close()\n\n    md_content = f\"## Training Curves\\n\\n![Training\
+          \ Curves]({local_png_path})\"\n    with open(learning_curves.path, \"w\"\
+          ) as f:\n        f.write(md_content)\n\n    # Save fine-tuned model\n  \
+          \  os.makedirs(saved_model.path, exist_ok=True)\n    model_filepath = os.path.join(saved_model.path,\
+          \ \"model.keras\")\n    classifier.save(model_filepath)\n\n"
         image: python:3.11-slim
     exec-load-hf-dataset:
       container:
@@ -191,6 +279,33 @@ pipelineInfo:
 root:
   dag:
     tasks:
+      evaluate-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model
+        dependentTasks:
+        - finetune-bert
+        - load-hf-dataset
+        inputs:
+          artifacts:
+            saved_model:
+              taskOutputArtifact:
+                outputArtifactKey: saved_model
+                producerTask: finetune-bert
+            test_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: test_dataset
+                producerTask: load-hf-dataset
+          parameters:
+            batch_size:
+              componentInputParameter: batch_size
+            label_col:
+              componentInputParameter: label_column_name
+            text_col:
+              componentInputParameter: text_column_name
+        taskInfo:
+          name: evaluate-model
       finetune-bert:
         cachingOptions:
           enableCache: true

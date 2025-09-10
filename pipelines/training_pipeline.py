@@ -1,5 +1,5 @@
 from kfp.dsl import pipeline
-from components import data_loader, trainer
+from components import data_loader, model_trainer, model_evaluator
 from typing import Optional
 
 @pipeline(
@@ -25,7 +25,7 @@ def training_pipeline(
         val_fraction=val_data_fraction,
         seed=dataset_split_seed
     )
-    finetune_bert_op = trainer.finetune_bert(
+    finetune_bert_op = model_trainer.finetune_bert(
         preset=bert_preset,
         batch_size=batch_size,
         text_col=text_column_name,
@@ -37,6 +37,13 @@ def training_pipeline(
         debug_batch_count=debug_batch_count,
         train_dataset=load_dataset_op.outputs["train_dataset"],
         val_dataset=load_dataset_op.outputs["val_dataset"]
+    )
+    evaluate_model_op = model_evaluator.evaluate_model(
+        batch_size=batch_size,
+        text_col=text_column_name,
+        label_col=label_column_name,
+        test_dataset=load_dataset_op.outputs["test_dataset"],
+        saved_model=finetune_bert_op.outputs["saved_model"]
     )
 
 
