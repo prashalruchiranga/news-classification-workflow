@@ -1,10 +1,18 @@
 # PIPELINE DEFINITION
 # Name: news-clf-model-trainer
-# Description: Pipeline to fine-tune a pretrained BERT model for news classification
+# Description: Pipeline to fine-tune a pre-trained BERT model for news classification
 # Inputs:
+#    batch_size: int [Default: 32.0]
 #    bert_preset: str [Default: 'bert_tiny_en_uncased']
 #    dataset_name: str
 #    dataset_split_seed: int [Default: 42.0]
+#    debug_batch_count: int
+#    early_stopping_min_delta: float [Default: 0.001]
+#    epochs: int [Default: 20.0]
+#    label_column_name: str
+#    learning_rate: float [Default: 5e-05]
+#    max_no_improve_epochs: int [Default: 5.0]
+#    text_column_name: str
 #    val_data_fraction: int [Default: 0.2]
 components:
   comp-finetune-bert:
@@ -20,8 +28,30 @@ components:
             schemaTitle: system.Dataset
             schemaVersion: 0.0.1
       parameters:
+        batch_size:
+          parameterType: NUMBER_INTEGER
+        debug_batch_count:
+          parameterType: NUMBER_INTEGER
+        epochs:
+          parameterType: NUMBER_INTEGER
+        label_col:
+          parameterType: STRING
+        lr:
+          parameterType: NUMBER_DOUBLE
+        min_delta:
+          parameterType: NUMBER_DOUBLE
+        patience:
+          parameterType: NUMBER_INTEGER
         preset:
           parameterType: STRING
+        text_col:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        saved_model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
   comp-load-hf-dataset:
     executorLabel: exec-load-hf-dataset
     inputDefinitions:
@@ -67,7 +97,7 @@ deploymentSpec:
           \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
           \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
           \  python3 -m pip install --quiet --no-warn-script-location 'datasets>=4.0.0'\
-          \ && \"$0\" \"$@\"\n"
+          \ 'tensorflow==2.18.0' 'keras-hub>=0.22.1' && \"$0\" \"$@\"\n"
         - sh
         - -ec
         - 'program_path=$(mktemp -d)
@@ -79,10 +109,38 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef finetune_bert(preset: str, train_dataset: Input[Dataset], val_dataset:\
-          \ Input[Dataset]):\n    from datasets import load_from_disk\n    train_split\
-          \ = load_from_disk(train_dataset.path)\n    val_split = load_from_disk(val_dataset.path)\n\
-          \    print(f\"Number of rows: {train_split.num_rows}\")\n\n"
+          \ *\n\ndef finetune_bert(\n    preset: str,\n    batch_size: int,\n    text_col:\
+          \ str,\n    label_col: str,\n    lr: float,\n    epochs: int,\n    min_delta:\
+          \ float,\n    patience: int,\n    debug_batch_count: int,\n    train_dataset:\
+          \ Input[Dataset],\n    val_dataset: Input[Dataset],\n    saved_model: Output[Model]\n\
+          \    ):\n    import os\n    import json\n    from datasets import load_from_disk\n\
+          \    from keras_hub.models import BertTextClassifier\n    from tensorflow.keras.losses\
+          \ import SparseCategoricalCrossentropy\n    from tensorflow.keras.metrics\
+          \ import SparseCategoricalAccuracy\n    from tensorflow.keras.optimizers\
+          \ import Adam\n    from tensorflow.keras.callbacks import EarlyStopping\n\
+          \n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x, y):\n   \
+          \     return x, y - 1\n\n    train_split = load_from_disk(train_dataset.path)\n\
+          \    val_split = load_from_disk(val_dataset.path)\n    tf_train_dataset\
+          \ = train_split.to_tf_dataset(\n        columns=[text_col],\n        label_cols=[label_col],\n\
+          \        batch_size=batch_size,\n        shuffle=True\n    )\n    tf_val_dataset\
+          \ = val_split.to_tf_dataset(\n        columns=[text_col],\n        label_cols=[label_col],\n\
+          \        batch_size=batch_size,\n        shuffle=True\n    )\n    tf_train_dataset\
+          \ = tf_train_dataset.map(adjust_labels)\n    tf_val_dataset = tf_val_dataset.map(adjust_labels)\n\
+          \n    if debug_batch_count is not None:\n        tf_train_dataset = tf_train_dataset.take(debug_batch_count)\n\
+          \        tf_val_dataset = tf_val_dataset.take(debug_batch_count)\n\n   \
+          \ number_of_classes = len(set(train_split[label_col]))\n    classifier =\
+          \ BertTextClassifier.from_preset(\n        preset=preset,\n        num_classes=number_of_classes,\n\
+          \    )\n    classifier.compile(\n        loss=SparseCategoricalCrossentropy(name=\"\
+          sparse_categorical_loss\", from_logits=True),\n        metrics = [SparseCategoricalAccuracy(name=\"\
+          sparse_categorical_accuracy\")],\n        optimizer=Adam(lr)\n    )\n  \
+          \  assert classifier.backbone.trainable == True\n\n    early_stopping =\
+          \ EarlyStopping(\n        min_delta=min_delta,\n        patience=patience,\n\
+          \        verbose=True,\n        restore_best_weights=True,\n    )\n    history\
+          \ = classifier.fit(\n        x=tf_train_dataset,\n        epochs=epochs,\n\
+          \        validation_data=tf_val_dataset,\n        callbacks=[early_stopping]\n\
+          \    )\n\n    # Save fine-tuned model\n    os.makedirs(saved_model.path,\
+          \ exist_ok=True)\n    model_filepath = os.path.join(saved_model.path, \"\
+          news_clf_model.keras\")\n    classifier.save(model_filepath)\n\n"
         image: python:3.11-slim
     exec-load-hf-dataset:
       container:
@@ -128,7 +186,7 @@ deploymentSpec:
           \  df.to_csv(preview.path, index=False)\n\n"
         image: python:3.11-slim
 pipelineInfo:
-  description: Pipeline to fine-tune a pretrained BERT model for news classification
+  description: Pipeline to fine-tune a pre-trained BERT model for news classification
   name: news-clf-model-trainer
 root:
   dag:
@@ -151,8 +209,24 @@ root:
                 outputArtifactKey: val_dataset
                 producerTask: load-hf-dataset
           parameters:
+            batch_size:
+              componentInputParameter: batch_size
+            debug_batch_count:
+              componentInputParameter: debug_batch_count
+            epochs:
+              componentInputParameter: epochs
+            label_col:
+              componentInputParameter: label_column_name
+            lr:
+              componentInputParameter: learning_rate
+            min_delta:
+              componentInputParameter: early_stopping_min_delta
+            patience:
+              componentInputParameter: max_no_improve_epochs
             preset:
               componentInputParameter: bert_preset
+            text_col:
+              componentInputParameter: text_column_name
         taskInfo:
           name: finetune-bert
       load-hf-dataset:
@@ -172,6 +246,10 @@ root:
           name: load-hf-dataset
   inputDefinitions:
     parameters:
+      batch_size:
+        defaultValue: 32.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
       bert_preset:
         defaultValue: bert_tiny_en_uncased
         isOptional: true
@@ -182,6 +260,29 @@ root:
         defaultValue: 42.0
         isOptional: true
         parameterType: NUMBER_INTEGER
+      debug_batch_count:
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      early_stopping_min_delta:
+        defaultValue: 0.001
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      epochs:
+        defaultValue: 20.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      label_column_name:
+        parameterType: STRING
+      learning_rate:
+        defaultValue: 5.0e-05
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      max_no_improve_epochs:
+        defaultValue: 5.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      text_column_name:
+        parameterType: STRING
       val_data_fraction:
         defaultValue: 0.2
         isOptional: true
