@@ -1,13 +1,7 @@
-from kfp.dsl import component, Input, Output, Dataset, Model, Markdown
+from kfp.dsl import component, Input, Output, Dataset, Model, HTML
 
 @component(
-    base_image="python:3.11-slim",
-    packages_to_install=[
-        "datasets>=4.0.0",
-        "tensorflow==2.18.0",
-        "keras-hub>=0.22.1",
-        "matplotlib>=3.10.6"
-    ]
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1"
 )
 def finetune_bert(
     preset: str,
@@ -21,11 +15,12 @@ def finetune_bert(
     debug_batch_count: int,
     train_dataset: Input[Dataset],
     val_dataset: Input[Dataset],
-    learning_curves: Output[Markdown],
+    training_curves: Output[HTML],
     saved_model: Output[Model]
     ):
     import os
-    import json
+    import base64
+    from io import BytesIO
     import matplotlib.pyplot as plt
     from datasets import load_from_disk
     from keras_hub.models import BertTextClassifier
@@ -84,7 +79,7 @@ def finetune_bert(
         callbacks=[early_stopping]
     )
 
-    # Save training curves as an artifact
+    # Visualize training and validation curves using an HTML artifact
     history_dict = history.history
     acc = history_dict["sparse_categorical_accuracy"]
     val_acc = history_dict["val_sparse_categorical_accuracy"]
@@ -111,13 +106,20 @@ def finetune_bert(
     plt.ylabel('Accuracy')
     plt.legend(loc='lower right')
 
-    local_png_path = "learning_curves.png"
-    plt.savefig(local_png_path, format="png")
-    plt.close()
-
-    md_content = f"## Training Curves\n\n![Training Curves]({local_png_path})"
-    with open(learning_curves.path, "w") as f:
-        f.write(md_content)
+    buffer = BytesIO()
+    plt.savefig(buffer, format="png")
+    buffer.seek(0)
+    img_base64 = base64.b64encode(buffer.read()).decode("utf-8")
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <body>
+        <img src="data:image/png;base64,{img_base64}" alt="Training curves">
+    </body>
+    </html>
+    """
+    with open(training_curves.path, "w") as f:
+        f.write(html)
 
     # Save fine-tuned model
     os.makedirs(saved_model.path, exist_ok=True)
