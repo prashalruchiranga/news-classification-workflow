@@ -1,16 +1,13 @@
 from kfp.dsl import component, Input, Output, Dataset, Model, Metrics
 
 @component(
-    base_image="python:3.11-slim",
-    packages_to_install=[
-        "datasets>=4.0.0",
-        "tensorflow==2.18.0"
-    ]
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1"
 )
 def evaluate_model(
     batch_size: int,
     text_col: str,
     label_col: str,
+    debug_batch_count: int,
     test_dataset: Input[Dataset],
     saved_model: Input[Model],
     metrics: Output[Metrics]
@@ -30,6 +27,9 @@ def evaluate_model(
         shuffle=True
     )
     tf_test_dataset = tf_test_dataset.map(adjust_labels)
+
+    if debug_batch_count is not None:
+        tf_test_dataset = tf_test_dataset.take(debug_batch_count)
 
     model_filepath = f"{saved_model.path}/model.keras"
     reloaded_model = tf.keras.models.load_model(model_filepath)

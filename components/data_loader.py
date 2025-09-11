@@ -1,8 +1,7 @@
 from kfp.dsl import component, Output, Dataset
 
 @component(
-    base_image="python:3.11-slim",
-    packages_to_install=["datasets>=4.0.0"],
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1"
 )
 def load_hf_dataset(
     name: str,
@@ -30,5 +29,5 @@ def load_hf_dataset(
     test_split.save_to_disk(test_dataset.path)
     
     # For preview only
-    df = train_split.to_pandas().head(20)
+    df = train_split.to_pandas().head(50)
     df.to_csv(preview.path, index=False)
