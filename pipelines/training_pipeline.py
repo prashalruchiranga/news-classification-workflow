@@ -42,6 +42,7 @@ def training_pipeline(
         batch_size=batch_size,
         text_col=text_column_name,
         label_col=label_column_name,
+        debug_batch_count=debug_batch_count,
         test_dataset=load_dataset_op.outputs["test_dataset"],
         saved_model=finetune_bert_op.outputs["saved_model"]
     )
