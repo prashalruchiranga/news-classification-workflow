@@ -1,3 +1,4 @@
+from kfp import kubernetes
 from kfp.dsl import pipeline
 from components import data_loader, model_trainer, model_evaluator
 from typing import Optional
@@ -7,6 +8,7 @@ from typing import Optional
     description= "Pipeline to fine-tune a pre-trained BERT model for news classification"
 )
 def training_pipeline(
+    mlflow_tracking_uri: str,
     dataset_name: str,
     text_column_name: str,
     label_column_name: str,
@@ -21,10 +23,15 @@ def training_pipeline(
     debug_batch_count: Optional[int] = None
     ):
     load_dataset_op = data_loader.load_hf_dataset(
+        mlflow_tracking_uri=mlflow_tracking_uri,
         name=dataset_name, 
         val_fraction=val_data_fraction,
         seed=dataset_split_seed
     )
+    kubernetes.use_secret_as_volume(task=load_dataset_op,
+                                    secret_name="gcs-credentials",
+                                    mount_path="/etc/gcs")
+
     finetune_bert_op = model_trainer.finetune_bert(
         preset=bert_preset,
         batch_size=batch_size,
@@ -67,12 +74,13 @@ if __name__ == "__main__":
     client.create_run_from_pipeline_func(
         pipeline_func=training_pipeline,
         arguments={
+            "mlflow_tracking_uri": configs.mlflow_server,
             "dataset_name": configs.dataset,
             "text_column_name": configs.text_column,
             "label_column_name": configs.label_column,
             "batch_size": configs.batch_size,
             "epochs": configs.epochs,
-            "debug_batch_count": configs.debug_batch_count
+            "debug_batch_count": configs.debug_batch_count,
         },
         experiment_name=configs.experiment
     )

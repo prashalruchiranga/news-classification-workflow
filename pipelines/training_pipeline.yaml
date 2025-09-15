@@ -12,6 +12,7 @@
 #    label_column_name: str
 #    learning_rate: float [Default: 5e-05]
 #    max_no_improve_epochs: int [Default: 5.0]
+#    mlflow_tracking_uri: str
 #    text_column_name: str
 #    val_data_fraction: int [Default: 0.2]
 components:
@@ -87,6 +88,8 @@ components:
     executorLabel: exec-load-hf-dataset
     inputDefinitions:
       parameters:
+        mlflow_tracking_uri:
+          parameterType: STRING
         name:
           parameterType: STRING
         seed:
@@ -226,8 +229,8 @@ deploymentSpec:
           \ = BytesIO()\n    plt.savefig(buffer, format=\"png\")\n    buffer.seek(0)\n\
           \    img_base64 = base64.b64encode(buffer.read()).decode(\"utf-8\")\n  \
           \  html = f\"\"\"\n    <!DOCTYPE html>\n    <html>\n    <body>\n       \
-          \ <img src=\"data:image/png;base64,{img_base64}\" alt=\"train/validation\
-          \ curves\">\n    </body>\n    </html>\n    \"\"\"\n    with open(training_curves.path,\
+          \ <img src=\"data:image/png;base64,{img_base64}\" alt=\"Training curves\"\
+          >\n    </body>\n    </html>\n    \"\"\"\n    with open(training_curves.path,\
           \ \"w\") as f:\n        f.write(html)\n\n    # Save fine-tuned model\n \
           \   os.makedirs(saved_model.path, exist_ok=True)\n    model_filepath = os.path.join(saved_model.path,\
           \ \"model.keras\")\n    classifier.save(model_filepath)\n\n"
@@ -245,8 +248,9 @@ deploymentSpec:
         - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
           \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
           \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
-          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
-          $0\" \"$@\"\n"
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
+          \  python3 -m pip install --quiet --no-warn-script-location 'mlflow==3.3.2'\
+          \ 'google-cloud-storage==3.3.1' && \"$0\" \"$@\"\n"
         - sh
         - -ec
         - 'program_path=$(mktemp -d)
@@ -258,21 +262,27 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef load_hf_dataset(\n    name: str,\n    # Fraction of the training\
-          \ dataset to use as the validation split. The validation set is taken from\
-          \ the training set, not from the entire dataset\n    val_fraction: int,\n\
-          \    seed: int,\n    train_dataset: Output[Dataset],\n    val_dataset: Output[Dataset],\n\
-          \    test_dataset: Output[Dataset],\n    preview: Output[Dataset]\n    ):\n\
-          \    \"Load a dataset from the Hugging Face Hub and save it as a DatasetDict\
-          \ artifact\"\n    from datasets import load_dataset\n    dataset = load_dataset(name)\n\
-          \n    # Split train dataset into train split and val split\n    split_dataset\
-          \ = dataset[\"train\"].train_test_split(test_size=val_fraction, shuffle=True,\
-          \ seed=seed)\n    train_split = split_dataset[\"train\"]\n    val_split\
-          \ = split_dataset[\"test\"]\n    # Just take test dataset as test split\n\
-          \    test_split = dataset[\"test\"]\n\n    train_split.save_to_disk(train_dataset.path)\n\
-          \    val_split.save_to_disk(val_dataset.path)\n    test_split.save_to_disk(test_dataset.path)\n\
-          \n    # For preview only\n    df = train_split.to_pandas().head(50)\n  \
-          \  df.to_csv(preview.path, index=False)\n\n"
+          \ *\n\ndef load_hf_dataset(\n    mlflow_tracking_uri: str,\n    name: str,\n\
+          \    val_fraction: int, # Fraction of the training dataset to use as the\
+          \ validation split\n    seed: int,\n    train_dataset: Output[Dataset],\n\
+          \    val_dataset: Output[Dataset],\n    test_dataset: Output[Dataset],\n\
+          \    preview: Output[Dataset]\n    ):\n    \"Load a dataset from the Hugging\
+          \ Face Hub and save it as a DatasetDict artifact\"\n    import os\n    from\
+          \ datasets import load_dataset\n    import mlflow\n\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"\
+          ] = \"/etc/gcs/key.json\"\n\n    dataset = load_dataset(name)\n    # Split\
+          \ train dataset into train split and val split\n    split_dataset = dataset[\"\
+          train\"].train_test_split(test_size=val_fraction, shuffle=True, seed=seed)\n\
+          \    train_split = split_dataset[\"train\"]\n    val_split = split_dataset[\"\
+          test\"]\n    # Just take test dataset as test split\n    test_split = dataset[\"\
+          test\"]\n\n    train_split.save_to_disk(train_dataset.path)\n    val_split.save_to_disk(val_dataset.path)\n\
+          \    test_split.save_to_disk(test_dataset.path)\n\n    # For preview only\n\
+          \    df = train_split.to_pandas().head(50)\n    df.to_csv(preview.path,\
+          \ index=False)\n\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n   \
+          \ mlflow.set_experiment(\"News Classification\")\n    with mlflow.start_run():\n\
+          \        mlflow.log_params(\n            params={\n                \"name\"\
+          : name,\n                \"val fraction\": val_fraction,\n             \
+          \   \"seed\": seed\n            }\n        )\n        mlflow.log_artifact(preview.path)\n\
+          \n"
         image: docker.io/prashalruchiranga/news-classifier:components-v1.1
 pipelineInfo:
   description: Pipeline to fine-tune a pre-trained BERT model for news classification
@@ -354,6 +364,8 @@ root:
           name: comp-load-hf-dataset
         inputs:
           parameters:
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
             name:
               componentInputParameter: dataset_name
             seed:
@@ -399,6 +411,8 @@ root:
         defaultValue: 5.0
         isOptional: true
         parameterType: NUMBER_INTEGER
+      mlflow_tracking_uri:
+        parameterType: STRING
       text_column_name:
         parameterType: STRING
       val_data_fraction:
@@ -407,3 +421,16 @@ root:
         parameterType: NUMBER_INTEGER
 schemaVersion: 2.1.0
 sdkVersion: kfp-2.13.0
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-load-hf-dataset:
+          secretAsVolume:
+          - mountPath: /etc/gcs
+            optional: false
+            secretName: gcs-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: gcs-credentials
