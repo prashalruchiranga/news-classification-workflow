@@ -1,8 +1,7 @@
 from kfp.dsl import component, Input, Output, Dataset, Model, HTML
 
 @component(
-    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1",
-    packages_to_install=["mlflow==3.3.2", "google-cloud-storage==3.3.1"],
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
 )
 def finetune_bert(
     mlflow_tracking_uri: str,
@@ -156,4 +155,4 @@ def finetune_bert(
         try:
             mlflow.log_artifact(model_filepath)
         except ConnectionError:
-            print("Connection aborted. MLflow was unable to upload an artifact to GCS within the default timeout.")
+            print("Connection aborted. MLflow was unable to upload the artifact to GCS within the default timeout.")

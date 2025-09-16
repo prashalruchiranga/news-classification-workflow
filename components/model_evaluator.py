@@ -1,8 +1,7 @@
 from kfp.dsl import component, Input, Output, Dataset, Model, Metrics
 
 @component(
-    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1",
-    packages_to_install=["mlflow==3.3.2", "google-cloud-storage==3.3.1"]
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
 )
 def evaluate_model(
     mlflow_tracking_uri: str,
