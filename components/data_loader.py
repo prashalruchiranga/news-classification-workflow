@@ -1,12 +1,14 @@
 from kfp.dsl import component, Output, Dataset
 
 @component(
-    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1"
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1",
+    packages_to_install=["mlflow==3.3.2", "google-cloud-storage==3.3.1"],
 )
 def load_hf_dataset(
+    mlflow_tracking_uri: str,
+    mlflow_run_id: str,
     name: str,
-    # Fraction of the training dataset to use as the validation split. The validation set is taken from the training set, not from the entire dataset
-    val_fraction: int,
+    val_fraction: int, # Fraction of the training dataset to use as the validation split
     seed: int,
     train_dataset: Output[Dataset],
     val_dataset: Output[Dataset],
@@ -14,9 +16,13 @@ def load_hf_dataset(
     preview: Output[Dataset]
     ):
     "Load a dataset from the Hugging Face Hub and save it as a DatasetDict artifact"
+    import os
+    import mlflow
     from datasets import load_dataset
-    dataset = load_dataset(name)
 
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
+
+    dataset = load_dataset(name)
     # Split train dataset into train split and val split
     split_dataset = dataset["train"].train_test_split(test_size=val_fraction, shuffle=True, seed=seed)
     train_split = split_dataset["train"]
@@ -31,3 +37,12 @@ def load_hf_dataset(
     # For preview only
     df = train_split.to_pandas().head(50)
     df.to_csv(preview.path, index=False)
+
+    # Log mlflow experiments
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    with mlflow.start_run(run_id=mlflow_run_id):
+        mlflow.log_params({
+            "dataset_name": name,
+            "val_data_fraction": val_fraction,
+            "dataset_split_seed": seed
+        })

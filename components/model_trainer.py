@@ -1,9 +1,12 @@
 from kfp.dsl import component, Input, Output, Dataset, Model, HTML
 
 @component(
-    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1"
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1",
+    packages_to_install=["mlflow==3.3.2", "google-cloud-storage==3.3.1"],
 )
 def finetune_bert(
+    mlflow_tracking_uri: str,
+    mlflow_run_id: str,
     preset: str,
     batch_size: int,
     text_col: str,
@@ -28,6 +31,11 @@ def finetune_bert(
     from tensorflow.keras.metrics import SparseCategoricalAccuracy
     from tensorflow.keras.optimizers import Adam
     from tensorflow.keras.callbacks import EarlyStopping
+    import mlflow
+
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
+    # Set the standard timeout for transfer operations in seconds
+    os.environ["MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT"] = "600"
 
     # shift [1,2,3,4] -> [0,1,2,3]
     def adjust_labels(x, y):
@@ -86,21 +94,21 @@ def finetune_bert(
     loss = history_dict['loss']
     val_loss = history_dict['val_loss']
 
-    epochs = range(1, len(acc) + 1)
+    epochs_completed = range(1, len(acc) + 1)
     fig = plt.figure(figsize=(10, 10))
     fig.tight_layout()
 
     plt.subplot(2, 1, 1)
-    plt.plot(epochs, loss, 'r', label='Training loss')
-    plt.plot(epochs, val_loss, 'b', label='Validation loss')
+    plt.plot(epochs_completed, loss, 'r', label='Training loss')
+    plt.plot(epochs_completed, val_loss, 'b', label='Validation loss')
     plt.title('Training and validation loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
 
     plt.subplot(2, 1, 2)
-    plt.plot(epochs, acc, 'r', label='Training acc')
-    plt.plot(epochs, val_acc, 'b', label='Validation acc')
+    plt.plot(epochs_completed, acc, 'r', label='Training acc')
+    plt.plot(epochs_completed, val_acc, 'b', label='Validation acc')
     plt.title('Training and validation accuracy')
     plt.xlabel('Epochs')
     plt.ylabel('Accuracy')
@@ -125,3 +133,27 @@ def finetune_bert(
     os.makedirs(saved_model.path, exist_ok=True)
     model_filepath = os.path.join(saved_model.path, "model.keras")
     classifier.save(model_filepath)
+
+    # Log mlflow experiments
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    with mlflow.start_run(run_id=mlflow_run_id):
+        mlflow.log_params({
+            "bert_preset": preset,
+            "batch_size": batch_size,
+            "learning_rate": lr,
+            "epochs": epochs,
+            "early_stopping_min_delta": min_delta,
+            "early_stopping_patience": patience,
+            "debug_batch_count": debug_batch_count
+        })
+        mlflow.log_dict(history_dict, "history.json")
+        mlflow.log_figure(fig, "training_curves.png")
+        for epoch in range(len(acc)):
+            mlflow.log_metric("loss", loss[epoch], step=epoch+1)
+            mlflow.log_metric("val_loss", val_loss[epoch], step=epoch+1)
+            mlflow.log_metric("sparse_categorical_accuracy", acc[epoch], step=epoch+1)
+            mlflow.log_metric("val_sparse_categorical_accuracy", val_acc[epoch], step=epoch+1)
+        try:
+            mlflow.log_artifact(model_filepath)
+        except ConnectionError:
+            print("Connection aborted. MLflow was unable to upload an artifact to GCS within the default timeout.")

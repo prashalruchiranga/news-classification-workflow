@@ -1,9 +1,12 @@
 from kfp.dsl import component, Input, Output, Dataset, Model, Metrics
 
 @component(
-    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1"
+    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.1",
+    packages_to_install=["mlflow==3.3.2", "google-cloud-storage==3.3.1"]
 )
 def evaluate_model(
+    mlflow_tracking_uri: str,
+    mlflow_run_id: str,
     batch_size: int,
     text_col: str,
     label_col: str,
@@ -12,8 +15,12 @@ def evaluate_model(
     saved_model: Input[Model],
     metrics: Output[Metrics]
 ):
+    import os
     from datasets import load_from_disk
     import tensorflow as tf
+    import mlflow
+
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
 
     # shift [1,2,3,4] -> [0,1,2,3]
     def adjust_labels(x, y):
@@ -36,3 +43,11 @@ def evaluate_model(
     loss, accuracy = reloaded_model.evaluate(tf_test_dataset)
     metrics.log_metric("loss", float(loss))
     metrics.log_metric("sparse_categorical_accuracy", float(accuracy))
+
+    # Log mlflow experiments
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    with mlflow.start_run(run_id=mlflow_run_id):
+        mlflow.log_metrics({
+            "loss": loss, 
+            "sparse_categorical_accuracy": accuracy
+        })
