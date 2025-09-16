@@ -5,3 +5,5 @@ keras-hub==0.18.1
 matplotlib==3.7.2
 pandas==2.2.3
 tensorflow==2.18.0
+mlflow==3.3.2
+google-cloud-storage==3.3.1
