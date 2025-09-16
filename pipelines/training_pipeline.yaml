@@ -8,10 +8,11 @@
 #    dataset_split_seed: int [Default: 42.0]
 #    debug_batch_count: int
 #    early_stopping_min_delta: float [Default: 0.001]
+#    early_stopping_patience: int [Default: 5.0]
 #    epochs: int [Default: 20.0]
+#    experiment_name: str
 #    label_column_name: str
 #    learning_rate: float [Default: 5e-05]
-#    max_no_improve_epochs: int [Default: 5.0]
 #    mlflow_tracking_uri: str
 #    text_column_name: str
 #    val_data_fraction: int [Default: 0.2]
@@ -34,6 +35,10 @@ components:
         debug_batch_count:
           parameterType: NUMBER_INTEGER
         label_col:
+          parameterType: STRING
+        mlflow_run_id:
+          parameterType: STRING
+        mlflow_tracking_uri:
           parameterType: STRING
         text_col:
           parameterType: STRING
@@ -68,6 +73,10 @@ components:
           parameterType: NUMBER_DOUBLE
         min_delta:
           parameterType: NUMBER_DOUBLE
+        mlflow_run_id:
+          parameterType: STRING
+        mlflow_tracking_uri:
+          parameterType: STRING
         patience:
           parameterType: NUMBER_INTEGER
         preset:
@@ -84,10 +93,24 @@ components:
           artifactType:
             schemaTitle: system.HTML
             schemaVersion: 0.0.1
+  comp-get-run-id:
+    executorLabel: exec-get-run-id
+    inputDefinitions:
+      parameters:
+        experiment_name:
+          parameterType: STRING
+        mlflow_tracking_uri:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRING
   comp-load-hf-dataset:
     executorLabel: exec-load-hf-dataset
     inputDefinitions:
       parameters:
+        mlflow_run_id:
+          parameterType: STRING
         mlflow_tracking_uri:
           parameterType: STRING
         name:
@@ -142,21 +165,26 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef evaluate_model(\n    batch_size: int,\n    text_col: str,\n \
-          \   label_col: str,\n    debug_batch_count: int,\n    test_dataset: Input[Dataset],\n\
-          \    saved_model: Input[Model],\n    metrics: Output[Metrics]\n):\n    from\
-          \ datasets import load_from_disk\n    import tensorflow as tf\n\n    # shift\
-          \ [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x, y):\n        return x,\
-          \ y - 1\n\n    test_split = load_from_disk(test_dataset.path)\n    tf_test_dataset\
-          \ = test_split.to_tf_dataset(\n        columns=[text_col],\n        label_cols=[label_col],\n\
-          \        batch_size=batch_size,\n        shuffle=True\n    )\n    tf_test_dataset\
-          \ = tf_test_dataset.map(adjust_labels)\n\n    if debug_batch_count is not\
-          \ None:\n        tf_test_dataset = tf_test_dataset.take(debug_batch_count)\n\
+          \ *\n\ndef evaluate_model(\n    mlflow_tracking_uri: str,\n    mlflow_run_id:\
+          \ str,\n    batch_size: int,\n    text_col: str,\n    label_col: str,\n\
+          \    debug_batch_count: int,\n    test_dataset: Input[Dataset],\n    saved_model:\
+          \ Input[Model],\n    metrics: Output[Metrics]\n):\n    import os\n    from\
+          \ datasets import load_from_disk\n    import tensorflow as tf\n    import\
+          \ mlflow\n\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"] = \"/etc/gcs/key.json\"\
+          \n\n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x, y):\n \
+          \       return x, y - 1\n\n    test_split = load_from_disk(test_dataset.path)\n\
+          \    tf_test_dataset = test_split.to_tf_dataset(\n        columns=[text_col],\n\
+          \        label_cols=[label_col],\n        batch_size=batch_size,\n     \
+          \   shuffle=True\n    )\n    tf_test_dataset = tf_test_dataset.map(adjust_labels)\n\
+          \n    if debug_batch_count is not None:\n        tf_test_dataset = tf_test_dataset.take(debug_batch_count)\n\
           \n    model_filepath = f\"{saved_model.path}/model.keras\"\n    reloaded_model\
           \ = tf.keras.models.load_model(model_filepath)\n    loss, accuracy = reloaded_model.evaluate(tf_test_dataset)\n\
           \    metrics.log_metric(\"loss\", float(loss))\n    metrics.log_metric(\"\
-          sparse_categorical_accuracy\", float(accuracy))\n\n"
-        image: docker.io/prashalruchiranga/news-classifier:components-v1.1
+          sparse_categorical_accuracy\", float(accuracy))\n\n    # Log mlflow experiments\n\
+          \    mlflow.set_tracking_uri(mlflow_tracking_uri)\n    with mlflow.start_run(run_id=mlflow_run_id):\n\
+          \        mlflow.log_metrics({\n            \"loss\": loss, \n          \
+          \  \"sparse_categorical_accuracy\": accuracy\n        })\n\n"
+        image: docker.io/prashalruchiranga/news-classifier:components-v1.2
     exec-finetune-bert:
       container:
         args:
@@ -183,17 +211,21 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef finetune_bert(\n    preset: str,\n    batch_size: int,\n    text_col:\
-          \ str,\n    label_col: str,\n    lr: float,\n    epochs: int,\n    min_delta:\
-          \ float,\n    patience: int,\n    debug_batch_count: int,\n    train_dataset:\
-          \ Input[Dataset],\n    val_dataset: Input[Dataset],\n    training_curves:\
-          \ Output[HTML],\n    saved_model: Output[Model]\n    ):\n    import os\n\
-          \    import base64\n    from io import BytesIO\n    import matplotlib.pyplot\
-          \ as plt\n    from datasets import load_from_disk\n    from keras_hub.models\
-          \ import BertTextClassifier\n    from tensorflow.keras.losses import SparseCategoricalCrossentropy\n\
+          \ *\n\ndef finetune_bert(\n    mlflow_tracking_uri: str,\n    mlflow_run_id:\
+          \ str,\n    preset: str,\n    batch_size: int,\n    text_col: str,\n   \
+          \ label_col: str,\n    lr: float,\n    epochs: int,\n    min_delta: float,\n\
+          \    patience: int,\n    debug_batch_count: int,\n    train_dataset: Input[Dataset],\n\
+          \    val_dataset: Input[Dataset],\n    training_curves: Output[HTML],\n\
+          \    saved_model: Output[Model]\n    ):\n    import os\n    import base64\n\
+          \    from io import BytesIO\n    import matplotlib.pyplot as plt\n    from\
+          \ datasets import load_from_disk\n    from keras_hub.models import BertTextClassifier\n\
+          \    from tensorflow.keras.losses import SparseCategoricalCrossentropy\n\
           \    from tensorflow.keras.metrics import SparseCategoricalAccuracy\n  \
           \  from tensorflow.keras.optimizers import Adam\n    from tensorflow.keras.callbacks\
-          \ import EarlyStopping\n\n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x,\
+          \ import EarlyStopping\n    import mlflow\n\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"\
+          ] = \"/etc/gcs/key.json\"\n    # Set the standard timeout for transfer operations\
+          \ in seconds\n    os.environ[\"MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT\"\
+          ] = \"600\"\n\n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x,\
           \ y):\n        return x, y - 1\n\n    train_split = load_from_disk(train_dataset.path)\n\
           \    val_split = load_from_disk(val_dataset.path)\n    tf_train_dataset\
           \ = train_split.to_tf_dataset(\n        columns=[text_col],\n        label_cols=[label_col],\n\
@@ -217,14 +249,14 @@ deploymentSpec:
           \    history_dict = history.history\n    acc = history_dict[\"sparse_categorical_accuracy\"\
           ]\n    val_acc = history_dict[\"val_sparse_categorical_accuracy\"]\n   \
           \ loss = history_dict['loss']\n    val_loss = history_dict['val_loss']\n\
-          \n    epochs = range(1, len(acc) + 1)\n    fig = plt.figure(figsize=(10,\
-          \ 10))\n    fig.tight_layout()\n\n    plt.subplot(2, 1, 1)\n    plt.plot(epochs,\
-          \ loss, 'r', label='Training loss')\n    plt.plot(epochs, val_loss, 'b',\
-          \ label='Validation loss')\n    plt.title('Training and validation loss')\n\
-          \    plt.xlabel('Epochs')\n    plt.ylabel('Loss')\n    plt.legend()\n\n\
-          \    plt.subplot(2, 1, 2)\n    plt.plot(epochs, acc, 'r', label='Training\
-          \ acc')\n    plt.plot(epochs, val_acc, 'b', label='Validation acc')\n  \
-          \  plt.title('Training and validation accuracy')\n    plt.xlabel('Epochs')\n\
+          \n    epochs_completed = range(1, len(acc) + 1)\n    fig = plt.figure(figsize=(10,\
+          \ 10))\n    fig.tight_layout()\n\n    plt.subplot(2, 1, 1)\n    plt.plot(epochs_completed,\
+          \ loss, 'r', label='Training loss')\n    plt.plot(epochs_completed, val_loss,\
+          \ 'b', label='Validation loss')\n    plt.title('Training and validation\
+          \ loss')\n    plt.xlabel('Epochs')\n    plt.ylabel('Loss')\n    plt.legend()\n\
+          \n    plt.subplot(2, 1, 2)\n    plt.plot(epochs_completed, acc, 'r', label='Training\
+          \ acc')\n    plt.plot(epochs_completed, val_acc, 'b', label='Validation\
+          \ acc')\n    plt.title('Training and validation accuracy')\n    plt.xlabel('Epochs')\n\
           \    plt.ylabel('Accuracy')\n    plt.legend(loc='lower right')\n\n    buffer\
           \ = BytesIO()\n    plt.savefig(buffer, format=\"png\")\n    buffer.seek(0)\n\
           \    img_base64 = base64.b64encode(buffer.read()).decode(\"utf-8\")\n  \
@@ -233,8 +265,57 @@ deploymentSpec:
           >\n    </body>\n    </html>\n    \"\"\"\n    with open(training_curves.path,\
           \ \"w\") as f:\n        f.write(html)\n\n    # Save fine-tuned model\n \
           \   os.makedirs(saved_model.path, exist_ok=True)\n    model_filepath = os.path.join(saved_model.path,\
-          \ \"model.keras\")\n    classifier.save(model_filepath)\n\n"
-        image: docker.io/prashalruchiranga/news-classifier:components-v1.1
+          \ \"model.keras\")\n    classifier.save(model_filepath)\n\n    # Log mlflow\
+          \ experiments\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n    with\
+          \ mlflow.start_run(run_id=mlflow_run_id):\n        mlflow.log_params({\n\
+          \            \"bert_preset\": preset,\n            \"batch_size\": batch_size,\n\
+          \            \"learning_rate\": lr,\n            \"epochs\": epochs,\n \
+          \           \"early_stopping_min_delta\": min_delta,\n            \"early_stopping_patience\"\
+          : patience,\n            \"debug_batch_count\": debug_batch_count\n    \
+          \    })\n        mlflow.log_dict(history_dict, \"history.json\")\n     \
+          \   mlflow.log_figure(fig, \"training_curves.png\")\n        for epoch in\
+          \ range(len(acc)):\n            mlflow.log_metric(\"loss\", loss[epoch],\
+          \ step=epoch+1)\n            mlflow.log_metric(\"val_loss\", val_loss[epoch],\
+          \ step=epoch+1)\n            mlflow.log_metric(\"sparse_categorical_accuracy\"\
+          , acc[epoch], step=epoch+1)\n            mlflow.log_metric(\"val_sparse_categorical_accuracy\"\
+          , val_acc[epoch], step=epoch+1)\n        try:\n            mlflow.log_artifact(model_filepath)\n\
+          \        except ConnectionError:\n            print(\"Connection aborted.\
+          \ MLflow was unable to upload the artifact to GCS within the default timeout.\"\
+          )\n\n"
+        image: docker.io/prashalruchiranga/news-classifier:components-v1.2
+    exec-get-run-id:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - get_run_id
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef get_run_id(\n    mlflow_tracking_uri: str,\n    experiment_name:\
+          \ str\n    ) -> str:\n    import os\n    import mlflow\n\n    os.environ[\"\
+          GOOGLE_APPLICATION_CREDENTIALS\"] = \"/etc/gcs/key.json\"\n\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n\
+          \    mlflow.set_experiment(experiment_name)\n    run = mlflow.start_run()\n\
+          \    run_id = run.info.run_id\n    mlflow.end_run()\n    return run_id\n\
+          \n"
+        image: docker.io/prashalruchiranga/news-classifier:components-v1.2
     exec-load-hf-dataset:
       container:
         args:
@@ -248,9 +329,8 @@ deploymentSpec:
         - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
           \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
           \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.13.0'\
-          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"'  &&\
-          \  python3 -m pip install --quiet --no-warn-script-location 'mlflow==3.3.2'\
-          \ 'google-cloud-storage==3.3.1' && \"$0\" \"$@\"\n"
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
         - sh
         - -ec
         - 'program_path=$(mktemp -d)
@@ -262,28 +342,27 @@ deploymentSpec:
 
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
-          \ *\n\ndef load_hf_dataset(\n    mlflow_tracking_uri: str,\n    name: str,\n\
-          \    val_fraction: int, # Fraction of the training dataset to use as the\
-          \ validation split\n    seed: int,\n    train_dataset: Output[Dataset],\n\
-          \    val_dataset: Output[Dataset],\n    test_dataset: Output[Dataset],\n\
-          \    preview: Output[Dataset]\n    ):\n    \"Load a dataset from the Hugging\
-          \ Face Hub and save it as a DatasetDict artifact\"\n    import os\n    from\
-          \ datasets import load_dataset\n    import mlflow\n\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"\
-          ] = \"/etc/gcs/key.json\"\n\n    dataset = load_dataset(name)\n    # Split\
-          \ train dataset into train split and val split\n    split_dataset = dataset[\"\
-          train\"].train_test_split(test_size=val_fraction, shuffle=True, seed=seed)\n\
-          \    train_split = split_dataset[\"train\"]\n    val_split = split_dataset[\"\
-          test\"]\n    # Just take test dataset as test split\n    test_split = dataset[\"\
-          test\"]\n\n    train_split.save_to_disk(train_dataset.path)\n    val_split.save_to_disk(val_dataset.path)\n\
-          \    test_split.save_to_disk(test_dataset.path)\n\n    # For preview only\n\
-          \    df = train_split.to_pandas().head(50)\n    df.to_csv(preview.path,\
-          \ index=False)\n\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n   \
-          \ mlflow.set_experiment(\"News Classification\")\n    with mlflow.start_run():\n\
-          \        mlflow.log_params(\n            params={\n                \"name\"\
-          : name,\n                \"val fraction\": val_fraction,\n             \
-          \   \"seed\": seed\n            }\n        )\n        mlflow.log_artifact(preview.path)\n\
-          \n"
-        image: docker.io/prashalruchiranga/news-classifier:components-v1.1
+          \ *\n\ndef load_hf_dataset(\n    mlflow_tracking_uri: str,\n    mlflow_run_id:\
+          \ str,\n    name: str,\n    val_fraction: int, # Fraction of the training\
+          \ dataset to use as the validation split\n    seed: int,\n    train_dataset:\
+          \ Output[Dataset],\n    val_dataset: Output[Dataset],\n    test_dataset:\
+          \ Output[Dataset],\n    preview: Output[Dataset]\n    ):\n    \"Load a dataset\
+          \ from the Hugging Face Hub and save it as a DatasetDict artifact\"\n  \
+          \  import os\n    import mlflow\n    from datasets import load_dataset\n\
+          \n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"] = \"/etc/gcs/key.json\"\
+          \n\n    dataset = load_dataset(name)\n    # Split train dataset into train\
+          \ split and val split\n    split_dataset = dataset[\"train\"].train_test_split(test_size=val_fraction,\
+          \ shuffle=True, seed=seed)\n    train_split = split_dataset[\"train\"]\n\
+          \    val_split = split_dataset[\"test\"]\n    # Just take test dataset as\
+          \ test split\n    test_split = dataset[\"test\"]\n\n    train_split.save_to_disk(train_dataset.path)\n\
+          \    val_split.save_to_disk(val_dataset.path)\n    test_split.save_to_disk(test_dataset.path)\n\
+          \n    # For preview only\n    df = train_split.to_pandas().head(50)\n  \
+          \  df.to_csv(preview.path, index=False)\n\n    # Log mlflow experiments\n\
+          \    mlflow.set_tracking_uri(mlflow_tracking_uri)\n    with mlflow.start_run(run_id=mlflow_run_id):\n\
+          \        mlflow.log_params({\n            \"dataset_name\": name,\n    \
+          \        \"val_data_fraction\": val_fraction,\n            \"dataset_split_seed\"\
+          : seed\n        })\n\n"
+        image: docker.io/prashalruchiranga/news-classifier:components-v1.2
 pipelineInfo:
   description: Pipeline to fine-tune a pre-trained BERT model for news classification
   name: news-clf-model-trainer
@@ -297,6 +376,7 @@ root:
           name: comp-evaluate-model
         dependentTasks:
         - finetune-bert
+        - get-run-id
         - load-hf-dataset
         inputs:
           artifacts:
@@ -315,6 +395,12 @@ root:
               componentInputParameter: debug_batch_count
             label_col:
               componentInputParameter: label_column_name
+            mlflow_run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: get-run-id
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
             text_col:
               componentInputParameter: text_column_name
         taskInfo:
@@ -325,6 +411,7 @@ root:
         componentRef:
           name: comp-finetune-bert
         dependentTasks:
+        - get-run-id
         - load-hf-dataset
         inputs:
           artifacts:
@@ -349,21 +436,45 @@ root:
               componentInputParameter: learning_rate
             min_delta:
               componentInputParameter: early_stopping_min_delta
+            mlflow_run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: get-run-id
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
             patience:
-              componentInputParameter: max_no_improve_epochs
+              componentInputParameter: early_stopping_patience
             preset:
               componentInputParameter: bert_preset
             text_col:
               componentInputParameter: text_column_name
         taskInfo:
           name: finetune-bert
+      get-run-id:
+        cachingOptions: {}
+        componentRef:
+          name: comp-get-run-id
+        inputs:
+          parameters:
+            experiment_name:
+              componentInputParameter: experiment_name
+            mlflow_tracking_uri:
+              componentInputParameter: mlflow_tracking_uri
+        taskInfo:
+          name: get-run-id
       load-hf-dataset:
         cachingOptions:
           enableCache: true
         componentRef:
           name: comp-load-hf-dataset
+        dependentTasks:
+        - get-run-id
         inputs:
           parameters:
+            mlflow_run_id:
+              taskOutputParameter:
+                outputParameterKey: Output
+                producerTask: get-run-id
             mlflow_tracking_uri:
               componentInputParameter: mlflow_tracking_uri
             name:
@@ -397,20 +508,22 @@ root:
         defaultValue: 0.001
         isOptional: true
         parameterType: NUMBER_DOUBLE
+      early_stopping_patience:
+        defaultValue: 5.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
       epochs:
         defaultValue: 20.0
         isOptional: true
         parameterType: NUMBER_INTEGER
+      experiment_name:
+        parameterType: STRING
       label_column_name:
         parameterType: STRING
       learning_rate:
         defaultValue: 5.0e-05
         isOptional: true
         parameterType: NUMBER_DOUBLE
-      max_no_improve_epochs:
-        defaultValue: 5.0
-        isOptional: true
-        parameterType: NUMBER_INTEGER
       mlflow_tracking_uri:
         parameterType: STRING
       text_column_name:
@@ -426,6 +539,30 @@ platforms:
   kubernetes:
     deploymentSpec:
       executors:
+        exec-evaluate-model:
+          secretAsVolume:
+          - mountPath: /etc/gcs
+            optional: false
+            secretName: gcs-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: gcs-credentials
+        exec-finetune-bert:
+          secretAsVolume:
+          - mountPath: /etc/gcs
+            optional: false
+            secretName: gcs-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: gcs-credentials
+        exec-get-run-id:
+          secretAsVolume:
+          - mountPath: /etc/gcs
+            optional: false
+            secretName: gcs-credentials
+            secretNameParameter:
+              runtimeValue:
+                constant: gcs-credentials
         exec-load-hf-dataset:
           secretAsVolume:
           - mountPath: /etc/gcs
