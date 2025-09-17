@@ -40,13 +40,13 @@ def evaluate_model(
     model_filepath = f"{saved_model.path}/model.keras"
     reloaded_model = tf.keras.models.load_model(model_filepath)
     loss, accuracy = reloaded_model.evaluate(tf_test_dataset)
-    metrics.log_metric("loss", float(loss))
-    metrics.log_metric("sparse_categorical_accuracy", float(accuracy))
+    metrics.log_metric("loss/test", float(loss))
+    metrics.log_metric("sparse_categorical_accuracy/test", float(accuracy))
 
     # Log mlflow experiments
     mlflow.set_tracking_uri(mlflow_tracking_uri)
     with mlflow.start_run(run_id=mlflow_run_id):
         mlflow.log_metrics({
-            "loss": loss, 
-            "sparse_categorical_accuracy": accuracy
+            "loss/test": loss, 
+            "sparse_categorical_accuracy/test": accuracy
         })
