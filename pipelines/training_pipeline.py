@@ -77,7 +77,7 @@ def training_pipeline(
         label_col=label_column_name,
         debug_batch_count=debug_batch_count,
         test_dataset=load_dataset_op.outputs["test_dataset"],
-        saved_model=finetune_bert_op.outputs["saved_model"]
+        saved_model=finetune_bert_op.outputs["keras_model"]
     )
     kubernetes.use_secret_as_volume(
         task=evaluate_model_op,

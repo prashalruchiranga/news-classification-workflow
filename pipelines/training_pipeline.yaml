@@ -85,7 +85,7 @@ components:
           parameterType: STRING
     outputDefinitions:
       artifacts:
-        saved_model:
+        keras_model:
           artifactType:
             schemaTitle: system.Model
             schemaVersion: 0.0.1
@@ -179,11 +179,12 @@ deploymentSpec:
           \n    if debug_batch_count is not None:\n        tf_test_dataset = tf_test_dataset.take(debug_batch_count)\n\
           \n    model_filepath = f\"{saved_model.path}/model.keras\"\n    reloaded_model\
           \ = tf.keras.models.load_model(model_filepath)\n    loss, accuracy = reloaded_model.evaluate(tf_test_dataset)\n\
-          \    metrics.log_metric(\"loss\", float(loss))\n    metrics.log_metric(\"\
-          sparse_categorical_accuracy\", float(accuracy))\n\n    # Log mlflow experiments\n\
-          \    mlflow.set_tracking_uri(mlflow_tracking_uri)\n    with mlflow.start_run(run_id=mlflow_run_id):\n\
-          \        mlflow.log_metrics({\n            \"loss\": loss, \n          \
-          \  \"sparse_categorical_accuracy\": accuracy\n        })\n\n"
+          \    metrics.log_metric(\"loss/test\", float(loss))\n    metrics.log_metric(\"\
+          sparse_categorical_accuracy/test\", float(accuracy))\n\n    # Log mlflow\
+          \ experiments\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n    with\
+          \ mlflow.start_run(run_id=mlflow_run_id):\n        mlflow.log_metrics({\n\
+          \            \"loss/test\": loss, \n            \"sparse_categorical_accuracy/test\"\
+          : accuracy\n        })\n\n"
         image: docker.io/prashalruchiranga/news-classifier:components-v1.2
     exec-finetune-bert:
       container:
@@ -216,7 +217,7 @@ deploymentSpec:
           \ label_col: str,\n    lr: float,\n    epochs: int,\n    min_delta: float,\n\
           \    patience: int,\n    debug_batch_count: int,\n    train_dataset: Input[Dataset],\n\
           \    val_dataset: Input[Dataset],\n    training_curves: Output[HTML],\n\
-          \    saved_model: Output[Model]\n    ):\n    import os\n    import base64\n\
+          \    keras_model: Output[Model]\n    ):\n    import os\n    import base64\n\
           \    from io import BytesIO\n    import matplotlib.pyplot as plt\n    from\
           \ datasets import load_from_disk\n    from keras_hub.models import BertTextClassifier\n\
           \    from tensorflow.keras.losses import SparseCategoricalCrossentropy\n\
@@ -264,7 +265,7 @@ deploymentSpec:
           \ <img src=\"data:image/png;base64,{img_base64}\" alt=\"Training curves\"\
           >\n    </body>\n    </html>\n    \"\"\"\n    with open(training_curves.path,\
           \ \"w\") as f:\n        f.write(html)\n\n    # Save fine-tuned model\n \
-          \   os.makedirs(saved_model.path, exist_ok=True)\n    model_filepath = os.path.join(saved_model.path,\
+          \   os.makedirs(keras_model.path, exist_ok=True)\n    model_filepath = os.path.join(keras_model.path,\
           \ \"model.keras\")\n    classifier.save(model_filepath)\n\n    # Log mlflow\
           \ experiments\n    mlflow.set_tracking_uri(mlflow_tracking_uri)\n    with\
           \ mlflow.start_run(run_id=mlflow_run_id):\n        mlflow.log_params({\n\
@@ -274,14 +275,20 @@ deploymentSpec:
           : patience,\n            \"debug_batch_count\": debug_batch_count\n    \
           \    })\n        mlflow.log_dict(history_dict, \"history.json\")\n     \
           \   mlflow.log_figure(fig, \"training_curves.png\")\n        for epoch in\
-          \ range(len(acc)):\n            mlflow.log_metric(\"loss\", loss[epoch],\
-          \ step=epoch+1)\n            mlflow.log_metric(\"val_loss\", val_loss[epoch],\
-          \ step=epoch+1)\n            mlflow.log_metric(\"sparse_categorical_accuracy\"\
-          , acc[epoch], step=epoch+1)\n            mlflow.log_metric(\"val_sparse_categorical_accuracy\"\
-          , val_acc[epoch], step=epoch+1)\n        try:\n            mlflow.log_artifact(model_filepath)\n\
-          \        except ConnectionError:\n            print(\"Connection aborted.\
-          \ MLflow was unable to upload the artifact to GCS within the default timeout.\"\
-          )\n\n"
+          \ range(len(acc)):\n            mlflow.log_metric(\"loss/train\", loss[epoch],\
+          \ step=epoch+1)\n            mlflow.log_metric(\"loss/validation\", val_loss[epoch],\
+          \ step=epoch+1)\n            mlflow.log_metric(\"sparse_categorical_accuracy/train\"\
+          , acc[epoch], step=epoch+1)\n            mlflow.log_metric(\"sparse_categorical_accuracy/validation\"\
+          , val_acc[epoch], step=epoch+1)\n\n        for batch_x, batch_y in tf_train_dataset.take(1):\n\
+          \            input_example = batch_x.numpy()\n            output_example\
+          \ = classifier.predict(input_example)\n        signature = mlflow.models.infer_signature(model_input=input_example,\
+          \ model_output=output_example)\n        try:\n            mlflow.tensorflow.log_model(\n\
+          \                model=classifier,\n                signature=signature,\n\
+          \                pip_requirements=\"/app/requirements.txt\"\n          \
+          \  )\n            # mlflow.log_artifact(local_path=model_filepath, artifact_path=\"\
+          keras_model\")\n        except ConnectionError:\n            print(\"Connection\
+          \ aborted. MLflow was unable to upload the artifact to GCS within the default\
+          \ timeout.\")\n\n"
         image: docker.io/prashalruchiranga/news-classifier:components-v1.2
     exec-get-run-id:
       container:
@@ -382,7 +389,7 @@ root:
           artifacts:
             saved_model:
               taskOutputArtifact:
-                outputArtifactKey: saved_model
+                outputArtifactKey: keras_model
                 producerTask: finetune-bert
             test_dataset:
               taskOutputArtifact:
