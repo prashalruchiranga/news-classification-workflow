@@ -18,7 +18,7 @@ def finetune_bert(
     train_dataset: Input[Dataset],
     val_dataset: Input[Dataset],
     training_curves: Output[HTML],
-    saved_model: Output[Model]
+    keras_model: Output[Model]
     ):
     import os
     import base64
@@ -129,8 +129,8 @@ def finetune_bert(
         f.write(html)
 
     # Save fine-tuned model
-    os.makedirs(saved_model.path, exist_ok=True)
-    model_filepath = os.path.join(saved_model.path, "model.keras")
+    os.makedirs(keras_model.path, exist_ok=True)
+    model_filepath = os.path.join(keras_model.path, "model.keras")
     classifier.save(model_filepath)
 
     # Log mlflow experiments
@@ -148,11 +148,21 @@ def finetune_bert(
         mlflow.log_dict(history_dict, "history.json")
         mlflow.log_figure(fig, "training_curves.png")
         for epoch in range(len(acc)):
-            mlflow.log_metric("loss", loss[epoch], step=epoch+1)
-            mlflow.log_metric("val_loss", val_loss[epoch], step=epoch+1)
-            mlflow.log_metric("sparse_categorical_accuracy", acc[epoch], step=epoch+1)
-            mlflow.log_metric("val_sparse_categorical_accuracy", val_acc[epoch], step=epoch+1)
+            mlflow.log_metric("loss/train", loss[epoch], step=epoch+1)
+            mlflow.log_metric("loss/validation", val_loss[epoch], step=epoch+1)
+            mlflow.log_metric("sparse_categorical_accuracy/train", acc[epoch], step=epoch+1)
+            mlflow.log_metric("sparse_categorical_accuracy/validation", val_acc[epoch], step=epoch+1)
+        
+        for batch_x, batch_y in tf_train_dataset.take(1):
+            input_example = batch_x.numpy()
+            output_example = classifier.predict(input_example)
+        signature = mlflow.models.infer_signature(model_input=input_example, model_output=output_example)
         try:
-            mlflow.log_artifact(model_filepath)
+            mlflow.tensorflow.log_model(
+                model=classifier,
+                signature=signature,
+                pip_requirements="/app/requirements.txt"
+            )
+            # mlflow.log_artifact(local_path=model_filepath, artifact_path="keras_model")
         except ConnectionError:
             print("Connection aborted. MLflow was unable to upload the artifact to GCS within the default timeout.")
