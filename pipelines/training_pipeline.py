@@ -1,6 +1,6 @@
 from kfp import kubernetes
 from kfp.dsl import pipeline
-from components import mlflow_run, data_loader, model_trainer, model_evaluator
+from components import mlflow_run, data_loader, model_trainer, model_evaluator, model_validator
 from typing import Optional
 
 @pipeline(
@@ -10,6 +10,8 @@ from typing import Optional
 def training_pipeline(
     mlflow_tracking_uri: str,
     experiment_name: str,
+    registered_model_name: str,
+    baseline: float,
     dataset_name: str,
     text_column_name: str,
     label_column_name: str,
@@ -85,6 +87,20 @@ def training_pipeline(
         mount_path="/etc/gcs"
     )
 
+    validate_model_op = model_validator.validate_model(
+        mlflow_tracking_uri=mlflow_tracking_uri,
+        mlflow_run_id=run_id,
+        experiment_name=experiment_name,
+        registered_model_name=registered_model_name,
+        baseline=baseline
+    )
+    kubernetes.use_secret_as_volume(
+        task=validate_model_op,
+        secret_name="gcs-credentials",
+        mount_path="/etc/gcs"
+    )
+    validate_model_op.after(evaluate_model_op)
+
 
 if __name__ == "__main__":
     from kfp.compiler import Compiler
@@ -107,6 +123,8 @@ if __name__ == "__main__":
         arguments={
             "mlflow_tracking_uri": configs.mlflow_server,
             "experiment_name": configs.experiment,
+            "registered_model_name": configs.registered_model,
+            "baseline": configs.baseline,
             "dataset_name": configs.dataset,
             "text_column_name": configs.text_column,
             "label_column_name": configs.label_column,
