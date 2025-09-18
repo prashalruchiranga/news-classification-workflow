@@ -160,9 +160,9 @@ def finetune_bert(
         try:
             mlflow.tensorflow.log_model(
                 model=classifier,
+                name="keras-model",
                 signature=signature,
                 pip_requirements="/app/requirements.txt"
             )
-            # mlflow.log_artifact(local_path=model_filepath, artifact_path="keras_model")
         except ConnectionError:
             print("Connection aborted. MLflow was unable to upload the artifact to GCS within the default timeout.")
