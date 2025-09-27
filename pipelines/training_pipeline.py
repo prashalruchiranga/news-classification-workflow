@@ -127,7 +127,7 @@ if __name__ == "__main__":
     from utils.misc import load_config
     from types import SimpleNamespace
 
-    config_dict = load_config("./config/config.yaml")
+    config_dict = load_config("./configs/training.yaml")
     configs = SimpleNamespace(**config_dict)
 
     compiler = Compiler()
