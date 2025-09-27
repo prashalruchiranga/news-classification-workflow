@@ -8,7 +8,6 @@ from typing import Optional
     description= "Pipeline to fine-tune a pre-trained BERT model for news classification"
 )
 def training_pipeline(
-    mlflow_tracking_uri: str,
     experiment_name: str,
     registered_model_name: str,
     baseline: float,
@@ -26,7 +25,6 @@ def training_pipeline(
     debug_batch_count: Optional[int] = None
     ):
     get_run_id_op = mlflow_run.get_run_id(
-        mlflow_tracking_uri=mlflow_tracking_uri,
         experiment_name=experiment_name
     )
     kubernetes.use_secret_as_volume(
@@ -34,11 +32,15 @@ def training_pipeline(
         secret_name="gcs-credentials",
         mount_path="/etc/gcs"
     )
+    kubernetes.use_config_map_as_env(
+        task=get_run_id_op,
+        config_map_name="mlflow-config",
+        config_map_key_to_env={"mlflow_tracking_uri": "MLFLOW_TRACKING_URI"}
+    )
     get_run_id_op.set_caching_options(False)
     run_id = get_run_id_op.output
 
     load_dataset_op = data_loader.load_hf_dataset(
-        mlflow_tracking_uri=mlflow_tracking_uri,
         mlflow_run_id=run_id,
         name=dataset_name,
         val_fraction=val_data_fraction,
@@ -49,9 +51,13 @@ def training_pipeline(
         secret_name="gcs-credentials",
         mount_path="/etc/gcs"
     )
+    kubernetes.use_config_map_as_env(
+        task=load_dataset_op,
+        config_map_name="mlflow-config",
+        config_map_key_to_env={"mlflow_tracking_uri": "MLFLOW_TRACKING_URI"}
+    )
 
     finetune_bert_op = model_trainer.finetune_bert(
-        mlflow_tracking_uri=mlflow_tracking_uri,
         mlflow_run_id=run_id,
         preset=bert_preset,
         batch_size=batch_size,
@@ -70,9 +76,13 @@ def training_pipeline(
         secret_name="gcs-credentials",
         mount_path="/etc/gcs"
     )
+    kubernetes.use_config_map_as_env(
+        task=finetune_bert_op,
+        config_map_name="mlflow-config",
+        config_map_key_to_env={"mlflow_tracking_uri": "MLFLOW_TRACKING_URI"}
+    )
 
     evaluate_model_op = model_evaluator.evaluate_model(
-        mlflow_tracking_uri=mlflow_tracking_uri,
         mlflow_run_id=run_id,
         batch_size=batch_size,
         text_col=text_column_name,
@@ -86,9 +96,13 @@ def training_pipeline(
         secret_name="gcs-credentials",
         mount_path="/etc/gcs"
     )
+    kubernetes.use_config_map_as_env(
+        task=evaluate_model_op,
+        config_map_name="mlflow-config",
+        config_map_key_to_env={"mlflow_tracking_uri": "MLFLOW_TRACKING_URI"}
+    )
 
     validate_model_op = model_validator.validate_model(
-        mlflow_tracking_uri=mlflow_tracking_uri,
         mlflow_run_id=run_id,
         experiment_name=experiment_name,
         registered_model_name=registered_model_name,
@@ -98,6 +112,11 @@ def training_pipeline(
         task=validate_model_op,
         secret_name="gcs-credentials",
         mount_path="/etc/gcs"
+    )
+    kubernetes.use_config_map_as_env(
+        task=validate_model_op,
+        config_map_name="mlflow-config",
+        config_map_key_to_env={"mlflow_tracking_uri": "MLFLOW_TRACKING_URI"}
     )
     validate_model_op.after(evaluate_model_op)
 
@@ -121,7 +140,6 @@ if __name__ == "__main__":
     client.create_run_from_pipeline_func(
         pipeline_func=training_pipeline,
         arguments={
-            "mlflow_tracking_uri": configs.mlflow_server,
             "experiment_name": configs.experiment,
             "registered_model_name": configs.registered_model,
             "baseline": configs.baseline,
