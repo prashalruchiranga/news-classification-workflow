@@ -1,3 +1,15 @@
+# Kubeflow pipeline configuration and MLflow experiment tracking
 kfp_endpoint: "http://localhost:8080"
-dataset: "sh0416/ag_news"
 experiment: "news-classification"
+registered_model: "TinyBertTextClassifier"
+baseline: 0.8
+
+# Dataset and training parameters
+dataset: "sh0416/ag_news"
+text_column: "description"
+label_column: "label"
+batch_size: 16
+epochs: 2
+
+# Debug parameters
+debug_batch_count: 10
