@@ -4,7 +4,6 @@ from kfp.dsl import component, Input, Output, Dataset, Model, HTML
     base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
 )
 def finetune_bert(
-    mlflow_tracking_uri: str,
     mlflow_run_id: str,
     preset: str,
     batch_size: int,
@@ -31,10 +30,6 @@ def finetune_bert(
     from tensorflow.keras.optimizers import Adam
     from tensorflow.keras.callbacks import EarlyStopping
     import mlflow
-
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
-    # Set the standard timeout for transfer operations in seconds
-    os.environ["MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT"] = "600"
 
     # shift [1,2,3,4] -> [0,1,2,3]
     def adjust_labels(x, y):
@@ -134,7 +129,11 @@ def finetune_bert(
     classifier.save(model_filepath)
 
     # Log mlflow experiments
-    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    # Set the standard timeout for transfer operations in seconds
+    os.environ["MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT"] = "600"
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
+    tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
+    mlflow.set_tracking_uri(tracking_uri)
     with mlflow.start_run(run_id=mlflow_run_id):
         mlflow.log_params({
             "bert_preset": preset,
@@ -164,5 +163,6 @@ def finetune_bert(
                 signature=signature,
                 pip_requirements="/app/requirements.txt"
             )
-        except ConnectionError:
-            print("Connection aborted. MLflow was unable to upload the artifact to GCS within the default timeout.")
+        except Exception as ex:
+            print(f"MLflow was unable to upload the artifact to GCS: {ex}")
+            raise

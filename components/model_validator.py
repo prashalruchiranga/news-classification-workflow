@@ -4,7 +4,6 @@ from kfp.dsl import component
     base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
 )
 def validate_model(
-    mlflow_tracking_uri: str,
     mlflow_run_id: str,
     experiment_name: str,
     registered_model_name: str,
@@ -14,8 +13,8 @@ def validate_model(
     import mlflow
 
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
-
-    client = mlflow.tracking.MlflowClient(tracking_uri=mlflow_tracking_uri)
+    tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
+    client = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)
     run = client.get_run(run_id=mlflow_run_id)
     metrics = run.data.metrics
     test_accuracy = metrics["sparse_categorical_accuracy/test"]
@@ -31,7 +30,8 @@ def validate_model(
                 print(f"Model '{registered_model_name}' does not exist. Creating new model.")
                 client.create_registered_model(registered_model_name)
             else:
-                print("An error occured: {er}")
+                print(f"An error occurred while registering the model: {ex}")
+                raise
         mv = client.create_model_version(registered_model_name, source=mlflow_model_uri, run_id=mlflow_run_id)
         client.set_registered_model_tag(registered_model_name, key="experiment", value=experiment_name)
         client.set_registered_model_alias(registered_model_name, alias="challenger", version=mv.version)

@@ -4,7 +4,6 @@ from kfp.dsl import component, Output, Dataset
     base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
 )
 def load_hf_dataset(
-    mlflow_tracking_uri: str,
     mlflow_run_id: str,
     name: str,
     val_fraction: int, # Fraction of the training dataset to use as the validation split
@@ -18,8 +17,6 @@ def load_hf_dataset(
     import os
     import mlflow
     from datasets import load_dataset
-
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
 
     dataset = load_dataset(name)
     # Split train dataset into train split and val split
@@ -38,7 +35,9 @@ def load_hf_dataset(
     df.to_csv(preview.path, index=False)
 
     # Log mlflow experiments
-    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
+    tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
+    mlflow.set_tracking_uri(tracking_uri)
     with mlflow.start_run(run_id=mlflow_run_id):
         mlflow.log_params({
             "dataset_name": name,
