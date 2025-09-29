@@ -1,0 +1,4 @@
+google-cloud-storage==3.3.1
+fastapi[standard]==0.116.1
+mlflow==3.3.2
+keras-hub==0.18.1
