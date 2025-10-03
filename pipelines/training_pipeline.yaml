@@ -5,6 +5,7 @@
 #    baseline: float
 #    batch_size: int [Default: 32.0]
 #    bert_preset: str [Default: 'bert_tiny_en_uncased']
+#    category_lookup: dict
 #    dataset_name: str
 #    dataset_split_seed: int [Default: 42.0]
 #    debug_batch_count: int
@@ -33,6 +34,8 @@ components:
       parameters:
         batch_size:
           parameterType: NUMBER_INTEGER
+        category_lookup:
+          parameterType: STRUCT
         debug_batch_count:
           parameterType: NUMBER_INTEGER
         label_col:
@@ -43,6 +46,10 @@ components:
           parameterType: STRING
     outputDefinitions:
       artifacts:
+        confusion_matrix:
+          artifactType:
+            schemaTitle: system.ClassificationMetrics
+            schemaVersion: 0.0.1
         metrics:
           artifactType:
             schemaTitle: system.Metrics
@@ -171,12 +178,13 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef evaluate_model(\n    mlflow_run_id: str,\n    batch_size: int,\n\
-          \    text_col: str,\n    label_col: str,\n    debug_batch_count: int,\n\
-          \    test_dataset: Input[Dataset],\n    saved_model: Input[Model],\n   \
-          \ metrics: Output[Metrics]\n):\n    import os\n    from datasets import\
-          \ load_from_disk\n    import tensorflow as tf\n    import mlflow\n\n   \
-          \ # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x, y):\n       \
-          \ return x, y - 1\n\n    test_split = load_from_disk(test_dataset.path)\n\
+          \    text_col: str,\n    label_col: str,\n    category_lookup: dict,\n \
+          \   debug_batch_count: int,\n    test_dataset: Input[Dataset],\n    saved_model:\
+          \ Input[Model],\n    metrics: Output[Metrics],\n    confusion_matrix: Output[ClassificationMetrics]\n\
+          ):\n    import os\n    from datasets import load_from_disk\n    import tensorflow\
+          \ as tf\n    import mlflow\n    from sklearn.metrics import ConfusionMatrixDisplay\n\
+          \n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x, y):\n   \
+          \     return x, y - 1\n\n    test_split = load_from_disk(test_dataset.path)\n\
           \    tf_test_dataset = test_split.to_tf_dataset(\n        columns=[text_col],\n\
           \        label_cols=[label_col],\n        batch_size=batch_size,\n     \
           \   shuffle=True\n    )\n    tf_test_dataset = tf_test_dataset.map(adjust_labels)\n\
@@ -184,12 +192,21 @@ deploymentSpec:
           \n    model_filepath = f\"{saved_model.path}/model.keras\"\n    reloaded_model\
           \ = tf.keras.models.load_model(model_filepath)\n    loss, accuracy = reloaded_model.evaluate(tf_test_dataset)\n\
           \    metrics.log_metric(\"loss/test\", float(loss))\n    metrics.log_metric(\"\
-          sparse_categorical_accuracy/test\", float(accuracy))\n\n    # Log mlflow\
-          \ experiments\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"] = \"/etc/gcs/key.json\"\
-          \n    tracking_uri = os.environ[\"MLFLOW_TRACKING_URI\"]\n    mlflow.set_tracking_uri(tracking_uri)\n\
-          \    with mlflow.start_run(run_id=mlflow_run_id):\n        mlflow.log_metrics({\n\
-          \            \"loss/test\": loss, \n            \"sparse_categorical_accuracy/test\"\
-          : accuracy\n        })\n\n"
+          sparse_categorical_accuracy/test\", float(accuracy))\n\n    # Design the\
+          \ confusion matrix\n    labels = tf.convert_to_tensor(test_dataset[\"label\"\
+          ]) - 1\n    logits = reloaded_model.predict(test_dataset[\"description\"\
+          ])\n    probabilities = tf.nn.softmax(logits, axis=-1)\n    pred_class_ids\
+          \ = tf.argmax(probabilities, axis=-1)\n    matrix = tf.math.confusion_matrix(labels=labels,\
+          \ predictions=pred_class_ids)\n    confusion_matrix.log_confusion_matrix(\n\
+          \        categories=list(category_lookup.values()),\n        matrix=matrix.numpy().tolist()\n\
+          \    )\n    display = ConfusionMatrixDisplay(\n        confusion_matrix=matrix.numpy(),\n\
+          \        display_labels=list(category_lookup.values())\n    )\n    display.plot()\n\
+          \n    # Log mlflow experiments\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"\
+          ] = \"/etc/gcs/key.json\"\n    tracking_uri = os.environ[\"MLFLOW_TRACKING_URI\"\
+          ]\n    mlflow.set_tracking_uri(tracking_uri)\n    with mlflow.start_run(run_id=mlflow_run_id):\n\
+          \        mlflow.log_metrics({\n            \"loss/test\": loss, \n     \
+          \       \"sparse_categorical_accuracy/test\": accuracy\n        })\n   \
+          \     mlflow.log_figure(display.figure_, \"confusion_matrix.png\")\n\n"
         image: docker.io/prashalruchiranga/news-classifier:components-v1.2
     exec-finetune-bert:
       container:
@@ -269,10 +286,10 @@ deploymentSpec:
           \ \"w\") as f:\n        f.write(html)\n\n    # Save fine-tuned model\n \
           \   os.makedirs(keras_model.path, exist_ok=True)\n    model_filepath = os.path.join(keras_model.path,\
           \ \"model.keras\")\n    classifier.save(model_filepath)\n\n    # Log mlflow\
-          \ experiments\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"] = \"/etc/gcs/key.json\"\
-          \n    # Set the standard timeout for transfer operations in seconds\n  \
-          \  os.environ[\"MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT\"] = \"600\"\n \
-          \   tracking_uri = os.environ[\"MLFLOW_TRACKING_URI\"]\n    mlflow.set_tracking_uri(tracking_uri)\n\
+          \ experiments\n    # Set the standard timeout for transfer operations in\
+          \ seconds\n    os.environ[\"MLFLOW_ARTIFACT_UPLOAD_DOWNLOAD_TIMEOUT\"] =\
+          \ \"600\"\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"] = \"/etc/gcs/key.json\"\
+          \n    tracking_uri = os.environ[\"MLFLOW_TRACKING_URI\"]\n    mlflow.set_tracking_uri(tracking_uri)\n\
           \    with mlflow.start_run(run_id=mlflow_run_id):\n        mlflow.log_params({\n\
           \            \"bert_preset\": preset,\n            \"batch_size\": batch_size,\n\
           \            \"learning_rate\": lr,\n            \"epochs\": epochs,\n \
@@ -290,9 +307,9 @@ deploymentSpec:
           \ model_output=output_example)\n        try:\n            mlflow.tensorflow.log_model(\n\
           \                model=classifier,\n                name=\"keras-model\"\
           ,\n                signature=signature,\n                pip_requirements=\"\
-          /app/requirements.txt\"\n            )\n        except ConnectionError:\n\
-          \            print(\"Connection aborted. MLflow was unable to upload the\
-          \ artifact to GCS within the default timeout.\")\n\n"
+          /app/requirements.txt\"\n            )\n        except Exception as ex:\n\
+          \            print(f\"MLflow was unable to upload the artifact to GCS: {ex}\"\
+          )\n            raise\n\n"
         image: docker.io/prashalruchiranga/news-classifier:components-v1.2
     exec-get-run-id:
       container:
@@ -415,9 +432,9 @@ deploymentSpec:
           \ ex.error_code == \"RESOURCE_DOES_NOT_EXIST\":\n                print(f\"\
           Model '{registered_model_name}' does not exist. Creating new model.\")\n\
           \                client.create_registered_model(registered_model_name)\n\
-          \            else:\n                print(\"An error occured: {er}\")\n\
-          \        mv = client.create_model_version(registered_model_name, source=mlflow_model_uri,\
-          \ run_id=mlflow_run_id)\n        client.set_registered_model_tag(registered_model_name,\
+          \            else:\n                print(f\"An error occurred while registering\
+          \ the model: {ex}\")\n                raise\n        mv = client.create_model_version(registered_model_name,\
+          \ source=mlflow_model_uri, run_id=mlflow_run_id)\n        client.set_registered_model_tag(registered_model_name,\
           \ key=\"experiment\", value=experiment_name)\n        client.set_registered_model_alias(registered_model_name,\
           \ alias=\"challenger\", version=mv.version)\n    else:\n        message\
           \ = (\n            \"Model from run {} did not meet the baseline ({}). \"\
@@ -452,6 +469,8 @@ root:
           parameters:
             batch_size:
               componentInputParameter: batch_size
+            category_lookup:
+              componentInputParameter: category_lookup
             debug_batch_count:
               componentInputParameter: debug_batch_count
             label_col:
@@ -572,6 +591,8 @@ root:
         defaultValue: bert_tiny_en_uncased
         isOptional: true
         parameterType: STRING
+      category_lookup:
+        parameterType: STRUCT
       dataset_name:
         parameterType: STRING
       dataset_split_seed:

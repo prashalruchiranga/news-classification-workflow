@@ -14,6 +14,7 @@ def training_pipeline(
     dataset_name: str,
     text_column_name: str,
     label_column_name: str,
+    category_lookup: dict,
     val_data_fraction: int = 0.2,
     dataset_split_seed: int = 42,
     bert_preset: str = "bert_tiny_en_uncased",
@@ -87,6 +88,7 @@ def training_pipeline(
         batch_size=batch_size,
         text_col=text_column_name,
         label_col=label_column_name,
+        category_lookup=category_lookup,
         debug_batch_count=debug_batch_count,
         test_dataset=load_dataset_op.outputs["test_dataset"],
         saved_model=finetune_bert_op.outputs["keras_model"]
@@ -146,6 +148,7 @@ if __name__ == "__main__":
             "dataset_name": configs.dataset,
             "text_column_name": configs.text_column,
             "label_column_name": configs.label_column,
+            "category_lookup": configs.class_mapping,
             "batch_size": configs.batch_size,
             "epochs": configs.epochs,
             "debug_batch_count": configs.debug_batch_count,
