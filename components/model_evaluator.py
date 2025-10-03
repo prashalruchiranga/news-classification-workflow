@@ -17,6 +17,7 @@ def evaluate_model(
 ):
     import os
     from datasets import load_from_disk
+    import numpy as np
     import tensorflow as tf
     import mlflow
     from sklearn.metrics import ConfusionMatrixDisplay
@@ -44,11 +45,16 @@ def evaluate_model(
     metrics.log_metric("sparse_categorical_accuracy/test", float(accuracy))
 
     # Design the confusion matrix
-    labels = tf.convert_to_tensor(test_dataset["label"]) - 1
-    logits = reloaded_model.predict(test_dataset["description"])
+    examples, labels = [], []
+    for x, y in tf_test_dataset.as_numpy_iterator():
+        examples.append(x)
+        labels.append(y)
+    examples = np.concatenate(examples, axis=0)
+    labels = np.concatenate(labels, axis=0)
+    logits = reloaded_model.predict(examples)
     probabilities = tf.nn.softmax(logits, axis=-1)
-    pred_class_ids = tf.argmax(probabilities, axis=-1)
-    matrix = tf.math.confusion_matrix(labels=labels, predictions=pred_class_ids)
+    predictions = tf.argmax(probabilities, axis=-1)
+    matrix = tf.math.confusion_matrix(labels=labels, predictions=predictions)
     confusion_matrix.log_confusion_matrix(
         categories=list(category_lookup.values()),
         matrix=matrix.numpy().tolist()
@@ -59,13 +65,25 @@ def evaluate_model(
     )
     display.plot()
 
+    # Calculate precision, recall, and f1 score
+    metric = tf.keras.metrics.Precision()
+    metric.update_state(y_true=labels, y_pred=predictions)
+    precision = metric.result()
+    metric = tf.keras.metrics.Recall()
+    metric.update_state(y_true=labels, y_pred=predictions)
+    recall = metric.result()
+    f1_score = 2 * (precision * recall) / (precision + recall)
+
     # Log mlflow experiments
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
     tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
     mlflow.set_tracking_uri(tracking_uri)
     with mlflow.start_run(run_id=mlflow_run_id):
         mlflow.log_metrics({
-            "loss/test": loss, 
-            "sparse_categorical_accuracy/test": accuracy
+            "loss": loss, 
+            "sparse_categorical_accuracy": accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1_score": f1_score
         })
         mlflow.log_figure(display.figure_, "confusion_matrix.png")
