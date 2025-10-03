@@ -8,6 +8,7 @@ baseline: 0.8
 dataset: "sh0416/ag_news"
 text_column: "description"
 label_column: "label"
+class_mapping: {"1": "World", "2": "Sports", "3": "Business", "4": "Sci/Tech"}
 batch_size: 16
 epochs: 2
 
