@@ -1,4 +1,4 @@
-from kfp.dsl import component, Input, Output, Dataset, Model, Metrics
+from kfp.dsl import component, Input, Output, Dataset, Model, Metrics, ClassificationMetrics
 
 @component(
     base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
@@ -8,15 +8,18 @@ def evaluate_model(
     batch_size: int,
     text_col: str,
     label_col: str,
+    category_lookup: dict,
     debug_batch_count: int,
     test_dataset: Input[Dataset],
     saved_model: Input[Model],
-    metrics: Output[Metrics]
+    metrics: Output[Metrics],
+    confusion_matrix: Output[ClassificationMetrics]
 ):
     import os
     from datasets import load_from_disk
     import tensorflow as tf
     import mlflow
+    from sklearn.metrics import ConfusionMatrixDisplay
 
     # shift [1,2,3,4] -> [0,1,2,3]
     def adjust_labels(x, y):
@@ -40,6 +43,22 @@ def evaluate_model(
     metrics.log_metric("loss/test", float(loss))
     metrics.log_metric("sparse_categorical_accuracy/test", float(accuracy))
 
+    # Design the confusion matrix
+    labels = tf.convert_to_tensor(test_dataset["label"]) - 1
+    logits = reloaded_model.predict(test_dataset["description"])
+    probabilities = tf.nn.softmax(logits, axis=-1)
+    pred_class_ids = tf.argmax(probabilities, axis=-1)
+    matrix = tf.math.confusion_matrix(labels=labels, predictions=pred_class_ids)
+    confusion_matrix.log_confusion_matrix(
+        categories=list(category_lookup.values()),
+        matrix=matrix.numpy().tolist()
+    )
+    display = ConfusionMatrixDisplay(
+        confusion_matrix=matrix.numpy(),
+        display_labels=list(category_lookup.values())
+    )
+    display.plot()
+
     # Log mlflow experiments
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/etc/gcs/key.json"
     tracking_uri = os.environ["MLFLOW_TRACKING_URI"]
@@ -49,3 +68,4 @@ def evaluate_model(
             "loss/test": loss, 
             "sparse_categorical_accuracy/test": accuracy
         })
+        mlflow.log_figure(display.figure_, "confusion_matrix.png")
