@@ -10,7 +10,7 @@ from typing import Optional
 def training_pipeline(
     experiment_name: str,
     registered_model_name: str,
-    baseline: float,
+    baseline: dict,
     dataset_name: str,
     text_column_name: str,
     label_column_name: str,

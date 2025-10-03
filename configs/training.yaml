@@ -2,7 +2,7 @@
 kfp_endpoint: "http://localhost:8080"
 experiment: "news-classification"
 registered_model: "TinyBertTextClassifier"
-baseline: 0.8
+baseline: {"accuracy": 0.8, "f1_score": 0.9}
 
 # Dataset and training parameters
 dataset: "sh0416/ag_news"

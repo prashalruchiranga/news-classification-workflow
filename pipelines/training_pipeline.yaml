@@ -2,7 +2,7 @@
 # Name: news-clf-model-trainer
 # Description: Pipeline to fine-tune a pre-trained BERT model for news classification
 # Inputs:
-#    baseline: float
+#    baseline: dict
 #    batch_size: int [Default: 32.0]
 #    bert_preset: str [Default: 'bert_tiny_en_uncased']
 #    category_lookup: dict
@@ -142,7 +142,7 @@ components:
     inputDefinitions:
       parameters:
         baseline:
-          parameterType: NUMBER_DOUBLE
+          parameterType: STRUCT
         experiment_name:
           parameterType: STRING
         mlflow_run_id:
@@ -181,32 +181,41 @@ deploymentSpec:
           \    text_col: str,\n    label_col: str,\n    category_lookup: dict,\n \
           \   debug_batch_count: int,\n    test_dataset: Input[Dataset],\n    saved_model:\
           \ Input[Model],\n    metrics: Output[Metrics],\n    confusion_matrix: Output[ClassificationMetrics]\n\
-          ):\n    import os\n    from datasets import load_from_disk\n    import tensorflow\
-          \ as tf\n    import mlflow\n    from sklearn.metrics import ConfusionMatrixDisplay\n\
-          \n    # shift [1,2,3,4] -> [0,1,2,3]\n    def adjust_labels(x, y):\n   \
-          \     return x, y - 1\n\n    test_split = load_from_disk(test_dataset.path)\n\
-          \    tf_test_dataset = test_split.to_tf_dataset(\n        columns=[text_col],\n\
-          \        label_cols=[label_col],\n        batch_size=batch_size,\n     \
-          \   shuffle=True\n    )\n    tf_test_dataset = tf_test_dataset.map(adjust_labels)\n\
+          ):\n    import os\n    from datasets import load_from_disk\n    import numpy\
+          \ as np\n    import tensorflow as tf\n    import mlflow\n    # from sklearn.metrics\
+          \ import ConfusionMatrixDisplay\n\n    # shift [1,2,3,4] -> [0,1,2,3]\n\
+          \    def adjust_labels(x, y):\n        return x, y - 1\n\n    test_split\
+          \ = load_from_disk(test_dataset.path)\n    tf_test_dataset = test_split.to_tf_dataset(\n\
+          \        columns=[text_col],\n        label_cols=[label_col],\n        batch_size=batch_size,\n\
+          \        shuffle=True\n    )\n    tf_test_dataset = tf_test_dataset.map(adjust_labels)\n\
           \n    if debug_batch_count is not None:\n        tf_test_dataset = tf_test_dataset.take(debug_batch_count)\n\
           \n    model_filepath = f\"{saved_model.path}/model.keras\"\n    reloaded_model\
           \ = tf.keras.models.load_model(model_filepath)\n    loss, accuracy = reloaded_model.evaluate(tf_test_dataset)\n\
           \    metrics.log_metric(\"loss/test\", float(loss))\n    metrics.log_metric(\"\
           sparse_categorical_accuracy/test\", float(accuracy))\n\n    # Design the\
-          \ confusion matrix\n    labels = tf.convert_to_tensor(test_dataset[\"label\"\
-          ]) - 1\n    logits = reloaded_model.predict(test_dataset[\"description\"\
-          ])\n    probabilities = tf.nn.softmax(logits, axis=-1)\n    pred_class_ids\
-          \ = tf.argmax(probabilities, axis=-1)\n    matrix = tf.math.confusion_matrix(labels=labels,\
-          \ predictions=pred_class_ids)\n    confusion_matrix.log_confusion_matrix(\n\
-          \        categories=list(category_lookup.values()),\n        matrix=matrix.numpy().tolist()\n\
-          \    )\n    display = ConfusionMatrixDisplay(\n        confusion_matrix=matrix.numpy(),\n\
-          \        display_labels=list(category_lookup.values())\n    )\n    display.plot()\n\
-          \n    # Log mlflow experiments\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"\
+          \ confusion matrix\n\n    examples, labels = [], []\n    for x, y in tf_test_dataset.as_numpy_iterator():\n\
+          \        examples.append(x)\n        labels.append(y)\n    examples = np.concatenate(examples,\
+          \ axis=0)\n    labels = np.concatenate(labels, axis=0)\n    logits = reloaded_model.predict(examples)\n\
+          \    # labels = tf.convert_to_tensor(test_split[\"label\"]) - 1\n    # logits\
+          \ = reloaded_model.predict(tf_test_dataset)\n    probabilities = tf.nn.softmax(logits,\
+          \ axis=-1)\n    predictions = tf.argmax(probabilities, axis=-1)\n    matrix\
+          \ = tf.math.confusion_matrix(labels=labels, predictions=predictions)\n \
+          \   confusion_matrix.log_confusion_matrix(\n        categories=list(category_lookup.values()),\n\
+          \        matrix=matrix.numpy().tolist()\n    )\n    # display = ConfusionMatrixDisplay(\n\
+          \    #     confusion_matrix=matrix.numpy(),\n    #     display_labels=list(category_lookup.values())\n\
+          \    # )\n    # display.plot()\n\n    # Calculate precision, recall, and\
+          \ f1 score\n    metric = tf.keras.metrics.Precision()\n    metric.update_state(y_true=labels,\
+          \ y_pred=predictions)\n    precision = metric.result()\n    metric = tf.keras.metrics.Recall()\n\
+          \    metric.update_state(y_true=labels, y_pred=predictions)\n    recall\
+          \ = metric.result()\n    f1_score = 2 * (precision * recall) / (precision\
+          \ + recall)\n\n    # Log mlflow experiments\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"\
           ] = \"/etc/gcs/key.json\"\n    tracking_uri = os.environ[\"MLFLOW_TRACKING_URI\"\
           ]\n    mlflow.set_tracking_uri(tracking_uri)\n    with mlflow.start_run(run_id=mlflow_run_id):\n\
-          \        mlflow.log_metrics({\n            \"loss/test\": loss, \n     \
-          \       \"sparse_categorical_accuracy/test\": accuracy\n        })\n   \
-          \     mlflow.log_figure(display.figure_, \"confusion_matrix.png\")\n\n"
+          \        mlflow.log_metrics({\n            \"loss\": loss, \n          \
+          \  \"sparse_categorical_accuracy\": accuracy,\n            \"precision\"\
+          : precision,\n            \"recall\": recall,\n            \"f1_score\"\
+          : f1_score\n        })\n        # mlflow.log_figure(display.figure_, \"\
+          confusion_matrix.png\")\n\n"
         image: docker.io/prashalruchiranga/news-classifier:components-v1.2
     exec-finetune-bert:
       container:
@@ -418,14 +427,16 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef validate_model(\n    mlflow_run_id: str,\n    experiment_name:\
-          \ str,\n    registered_model_name: str,\n    baseline: float\n):\n    import\
+          \ str,\n    registered_model_name: str,\n    baseline: dict\n):\n    import\
           \ os\n    import mlflow\n\n    os.environ[\"GOOGLE_APPLICATION_CREDENTIALS\"\
           ] = \"/etc/gcs/key.json\"\n    tracking_uri = os.environ[\"MLFLOW_TRACKING_URI\"\
           ]\n    client = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)\n\
           \    run = client.get_run(run_id=mlflow_run_id)\n    metrics = run.data.metrics\n\
-          \    test_accuracy = metrics[\"sparse_categorical_accuracy/test\"]\n\n \
-          \   # Register the model if accuracy exceeds the baseline\n    if test_accuracy\
-          \ >= baseline:\n        mlflow_model_uri = f\"runs:/{mlflow_run_id}/keras-model\"\
+          \    accuracy = metrics[\"sparse_categorical_accuracy\"]\n    f1_score =\
+          \ metrics[\"f1_score\"]\n\n    # Register the model if accuracy exceeds\
+          \ the baseline\n    baseline_accuracy = baseline[\"accuracy\"]\n    baseline_f1_score\
+          \ = baseline[\"f1_score\"]\n    if accuracy >= baseline_accuracy and f1_score\
+          \ >= baseline_f1_score:\n        mlflow_model_uri = f\"runs:/{mlflow_run_id}/keras-model\"\
           \n        try:\n            client.get_registered_model(registered_model_name)\n\
           \            print(f\"Model '{registered_model_name}' already exists.\"\
           )\n        except mlflow.exceptions.RestException as ex:\n            if\
@@ -582,7 +593,7 @@ root:
   inputDefinitions:
     parameters:
       baseline:
-        parameterType: NUMBER_DOUBLE
+        parameterType: STRUCT
       batch_size:
         defaultValue: 32.0
         isOptional: true
