@@ -7,7 +7,7 @@ def validate_model(
     mlflow_run_id: str,
     experiment_name: str,
     registered_model_name: str,
-    baseline: float
+    baseline: dict
 ):
     import os
     import mlflow
@@ -17,10 +17,13 @@ def validate_model(
     client = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)
     run = client.get_run(run_id=mlflow_run_id)
     metrics = run.data.metrics
-    test_accuracy = metrics["sparse_categorical_accuracy/test"]
+    accuracy = metrics["sparse_categorical_accuracy"]
+    f1_score = metrics["f1_score"]
 
-    # Register the model if accuracy exceeds the baseline
-    if test_accuracy >= baseline:
+    # Register the model if accuracy and f1 score exceed the baseline
+    baseline_accuracy = baseline["accuracy"]
+    baseline_f1_score = baseline["f1_score"]
+    if accuracy >= baseline_accuracy and f1_score >= baseline_f1_score:
         mlflow_model_uri = f"runs:/{mlflow_run_id}/keras-model"
         try:
             client.get_registered_model(registered_model_name)
