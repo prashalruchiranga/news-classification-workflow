@@ -1,7 +1,7 @@
 from kfp.dsl import component, Output, Dataset
 
 @component(
-    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
+    base_image="docker.io/prashalruchiranga/news-classification:kfp-base-arm64"
 )
 def load_hf_dataset(
     mlflow_run_id: str,

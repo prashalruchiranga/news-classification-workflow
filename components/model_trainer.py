@@ -1,7 +1,7 @@
 from kfp.dsl import component, Input, Output, Dataset, Model, HTML
 
 @component(
-    base_image="docker.io/prashalruchiranga/news-classifier:components-v1.2"
+    base_image="docker.io/prashalruchiranga/news-classification:kfp-base-arm64"
 )
 def finetune_bert(
     mlflow_run_id: str,
