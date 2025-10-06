@@ -4,8 +4,8 @@ import mlflow
 from google.cloud import aiplatform
 from utils.misc import load_config
 from google.api_core.exceptions import AlreadyExists
-from vertexai.operations.import_model import upload_model_to_vertexai
-from vertexai.operations.deploy_model import deploy_model_with_dedicated_resources
+from operations.import_model import upload_model_to_vertexai
+from operations.deploy_model import deploy_model_with_dedicated_resources
 
 def fetch_mlmodel_metadata(registered_model_name: str, alias: str):
     model_uri = f"models:/{registered_model_name}@{alias}"
