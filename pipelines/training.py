@@ -135,7 +135,7 @@ if __name__ == "__main__":
     compiler = Compiler()
     compiler.compile(
         pipeline_func=training_pipeline,
-        package_path="./pipelines/training_pipeline.yaml"
+        package_path="./pipelines/training.yaml"
     )
 
     client = Client(host=configs.kfp_endpoint)
