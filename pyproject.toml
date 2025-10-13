@@ -1,9 +1,19 @@
 [project]
-name = "news-clf-pipeline"
+name = "news-classification-mlops"
 version = "0.1.0"
-description = "Add your description here"
+description = "An end-to-end news classification workflow using Kubeflow, MLflow and Google Cloud Platform"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "datasets>=4.0.0",
+    "fastapi[standard]>=0.116.1",
+    "google-cloud-aiplatform>=1.118.0",
+    "google-cloud-storage>=2.19.0",
+    "keras-hub==0.18.1",
+    "kfp[kubernetes]>=2.13.0",
+    "matplotlib>=3.10.6",
+    "mlflow==3.3.2",
+    "pandas>=2.3.2",
+    "scikit-learn>=1.7.2",
+    "tensorflow==2.18.0",
 ]
