@@ -1,5 +1,4 @@
 ## News Classification MLOps
-## Overview
 This is an end-to-end news classification workflow implemented using Kubeflow, MLflow and Google Cloud Platform. It automates model training, evaluation, and validation with Kubeflow pipelines. Experiments and model versions are tracked using MLflow with Google Cloud Storage (GCS) as artifact storage and PostgreSQL as persistent backend store. The workflow includes a webhook receiver HTTPS service running on Cloud Run, which is triggered by MLflow events, and deploys trained models to Vertex AI for scalable inference. The deployment uses a custom serving container image running FastAPI, allowing flexible inference with custom dependencies and configurations for the model.
 
 The diagram below illustrates the architectural overview of the project.
